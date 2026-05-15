@@ -94,8 +94,81 @@ def load_notes() -> str:
         pass
     return ""
 
+PORTFOLIO_INSTRUCTIONS = """
+
+## Portfolio Management (CRITICAL — always follow this)
+When the user asks you to add/buy shares, sell shares, or set a price target, you MUST include the matching command tag on its own line in your response. Do not skip this even if you also explain the calculation.
+
+To add or buy shares:
+[PORTFOLIO:ADD symbol=TICKER shares=N buy_price=N.NNN target=N.NNN]
+(target is optional)
+
+To sell shares:
+[PORTFOLIO:SELL symbol=TICKER shares=N sell_price=N.NNN]
+
+To set a price target only:
+[PORTFOLIO:TARGET symbol=TICKER target=N.NNN]
+
+Use exact QSE ticker symbols (e.g. NEBRAS, QNBK, MARK, CBQK).
+The command will be executed automatically — you do not need to explain how to do it manually.
+"""
+
+_PORTFOLIO_CMD_RE = re.compile(r'\[PORTFOLIO:(ADD|SELL|TARGET)\s+([^\]]+)\]', re.IGNORECASE)
+
+def _parse_params(s: str) -> dict:
+    return {m.group(1).lower(): m.group(2) for m in re.finditer(r'(\w+)=([^\s\]]+)', s)}
+
+def _execute_portfolio_cmd(cmd: str, params: dict) -> str | None:
+    commission_rate = 0.0275 / 100
+    sym = params.get("symbol", "").upper()
+    if not sym:
+        return None
+    data = json.loads(PORTFOLIO_PATH.read_text()) if PORTFOLIO_PATH.exists() else {"holdings": {}}
+    data.setdefault("holdings", {})
+
+    if cmd == "ADD":
+        shares    = int(float(params.get("shares", 0)))
+        buy_price = float(params.get("buy_price", 0))
+        target    = float(params["target"]) if params.get("target") else None
+        if shares <= 0 or buy_price <= 0:
+            return None
+        data["holdings"][sym] = {"shares": shares, "buy_price": buy_price, "target": target}
+        data["updated"] = datetime.now().isoformat(timespec="minutes")
+        PORTFOLIO_PATH.write_text(json.dumps(data, indent=2))
+        return f"Added {shares:,} {sym} @ {buy_price:.3f} QAR"
+
+    elif cmd == "SELL":
+        shares_sold = int(float(params.get("shares", 0)))
+        sell_price  = float(params.get("sell_price", 0))
+        h = data["holdings"].get(sym)
+        if not h or shares_sold <= 0 or sell_price <= 0:
+            return None
+        shares_sold = min(shares_sold, h["shares"])
+        buy_com  = h["buy_price"] * shares_sold * commission_rate
+        sell_com = sell_price     * shares_sold * commission_rate
+        profit   = (sell_price - h["buy_price"]) * shares_sold - buy_com - sell_com
+        h["shares"] -= shares_sold
+        if h["shares"] == 0:
+            del data["holdings"][sym]
+        else:
+            data["holdings"][sym] = h
+        data["updated"] = datetime.now().isoformat(timespec="minutes")
+        PORTFOLIO_PATH.write_text(json.dumps(data, indent=2))
+        return f"Sold {shares_sold:,} {sym} @ {sell_price:.3f} QAR — net profit QAR {profit:+,.2f}"
+
+    elif cmd == "TARGET":
+        target = float(params.get("target", 0))
+        if sym not in data["holdings"] or target <= 0:
+            return None
+        data["holdings"][sym]["target"] = target
+        data["updated"] = datetime.now().isoformat(timespec="minutes")
+        PORTFOLIO_PATH.write_text(json.dumps(data, indent=2))
+        return f"Target for {sym} set to {target:.3f} QAR"
+
+    return None
+
 def get_system_prompt() -> str:
-    return load_soul() + load_notes()
+    return load_soul() + load_notes() + PORTFOLIO_INSTRUCTIONS
 
 def save_note(text: str):
     data = {"notes": []}
@@ -370,7 +443,13 @@ def chat():
                     if d.get("token"):
                         collected.append(d["token"])
                     if d.get("done") and user_msg:
-                        save_chat_exchange(chat_id, user_msg, "".join(collected))
+                        full_reply = "".join(collected)
+                        save_chat_exchange(chat_id, user_msg, full_reply)
+                        # Execute any portfolio commands found in reply
+                        for m in _PORTFOLIO_CMD_RE.finditer(full_reply):
+                            result = _execute_portfolio_cmd(m.group(1).upper(), _parse_params(m.group(2)))
+                            if result:
+                                yield f"data: {json.dumps({'portfolio_update': result})}\n\n"
                 except Exception:
                     pass
             yield chunk
@@ -439,6 +518,38 @@ def save_portfolio():
     PORTFOLIO_PATH.write_text(json.dumps(data, indent=2))
     return jsonify({"ok": True})
 
+@app.route("/api/portfolio/sell", methods=["POST"])
+def sell_holding():
+    body = request.get_json() or {}
+    sym         = body.get("symbol", "").upper()
+    shares_sold = int(body.get("shares", 0))
+    sell_price  = float(body.get("price", 0))
+
+    if not sym or shares_sold <= 0 or sell_price <= 0:
+        return jsonify({"error": "invalid input"}), 400
+
+    data = json.loads(PORTFOLIO_PATH.read_text()) if PORTFOLIO_PATH.exists() else {"holdings": {}}
+    h = data["holdings"].get(sym)
+    if not h:
+        return jsonify({"error": f"{sym} not found in portfolio"}), 404
+    if shares_sold > h["shares"]:
+        return jsonify({"error": f"Only {h['shares']} shares held"}), 400
+
+    commission_rate = 0.0275 / 100
+    buy_com  = h["buy_price"] * shares_sold * commission_rate
+    sell_com = sell_price     * shares_sold * commission_rate
+    profit   = (sell_price - h["buy_price"]) * shares_sold - buy_com - sell_com
+
+    h["shares"] -= shares_sold
+    if h["shares"] == 0:
+        del data["holdings"][sym]
+    else:
+        data["holdings"][sym] = h
+
+    data["updated"] = datetime.now().isoformat(timespec="minutes")
+    PORTFOLIO_PATH.write_text(json.dumps(data, indent=2))
+    return jsonify({"ok": True, "profit": round(profit, 2), "remaining": h.get("shares", 0)})
+
 @app.route("/api/notes", methods=["GET"])
 def get_notes():
     if NOTES_PATH.exists():
@@ -458,6 +569,10 @@ def add_note():
 def remove_note(index):
     delete_note(index)
     return jsonify({"ok": True})
+
+@app.route("/api/prices", methods=["GET"])
+def get_prices():
+    return jsonify(parse_prices_from_soul())
 
 @app.route("/api/status", methods=["GET"])
 def status():
@@ -704,6 +819,25 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="panel" id="tab-chat"></div>
     <div class="panel hidden" id="tab-portfolio">
       <div id="port-content"><p style="color:#8b949e;font-size:13px">Loading...</p></div>
+      <div id="proj-calc" style="display:none;margin-top:4px">
+        <h3 style="font-size:12px;color:#6e7681;text-transform:uppercase;letter-spacing:.06em;margin:16px 0 8px;padding-top:12px;border-top:1px solid #30363d">Projection Calculator</h3>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <div style="font-size:11px;color:#6e7681;margin-bottom:4px">Company</div>
+            <select id="calc-sym" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:7px 10px;font-size:13px"></select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6e7681;margin-bottom:4px">Sell Price (QAR)</div>
+            <input id="calc-price" type="number" step="0.001" placeholder="0.000" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:7px 10px;font-size:13px;width:110px">
+          </div>
+          <div>
+            <div style="font-size:11px;color:#6e7681;margin-bottom:4px">Shares to Sell</div>
+            <input id="calc-shares" type="number" placeholder="0" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:7px 10px;font-size:13px;width:110px">
+          </div>
+          <button class="btn btn-blue" onclick="calcProjection()">Calculate</button>
+        </div>
+        <div id="calc-result" style="margin-top:12px"></div>
+      </div>
     </div>
     <div class="panel hidden" id="tab-notes">
       <p style="color:#8b949e;font-size:12px;margin-bottom:10px">Notes are included in every conversation as persistent memory.</p>
@@ -933,8 +1067,9 @@ async function sendMsg(){
         if(!line.startsWith('data: '))continue;
         try{
           const d=JSON.parse(line.slice(6));
-          if(d.token){reply+=d.token;bubble.innerHTML=esc(reply);chatPanel.scrollTop=9e9;}
+          if(d.token){reply+=d.token;bubble.innerHTML=esc(reply.replace(/\[PORTFOLIO:[^\]]+\]/gi,'').trim());chatPanel.scrollTop=9e9;}
           if(d.error)bubble.textContent='[Error: '+d.error+']';
+          if(d.portfolio_update){toast('Portfolio updated: '+d.portfolio_update);loadPortfolio();}
         }catch(_){}
       }
     }
@@ -952,21 +1087,170 @@ async function doScrape(){
     const d=await fetch('/api/scrape',{method:'POST'}).then(r=>r.json());
     toast(d.ok?'Data refreshed':'Error: '+(d.error||'failed'));
     await loadStatus();
+    await loadPortfolio();
   }catch(e){toast('Error: '+e.message);}
   btn.textContent='Refresh';btn.disabled=false;
 }
 
+const COMMISSION = 0.0275 / 100; // 0.0275% per transaction (Group Securities)
+
+function pnlColor(v){return v>=0?'color:#3fb950':'color:#f85149';}
+function fmtQar(v){return(v>=0?'+':'')+' QAR '+Math.abs(v).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});}
+
 async function loadPortfolio(){
-  const d=await fetch('/api/portfolio').then(r=>r.json());
-  const holdings=d.holdings||{};
-  const el=document.getElementById('port-content');
-  if(!Object.keys(holdings).length){el.innerHTML='<p style="color:#8b949e;font-size:13px">No holdings yet. Tell Daleel to add stocks to your portfolio.</p>';return;}
-  let rows='';
-  for(const[sym,h]of Object.entries(holdings)){
-    const tgt=h.target?h.target.toFixed(3):'—';
-    rows+=`<tr><td><b>${sym}</b></td><td>${h.shares.toLocaleString()}</td><td>${h.buy_price.toFixed(3)}</td><td>${tgt}</td></tr>`;
+  const [d, prices] = await Promise.all([
+    fetch('/api/portfolio').then(r=>r.json()),
+    fetch('/api/prices').then(r=>r.json()),
+  ]);
+  const holdings = d.holdings||{};
+  const el = document.getElementById('port-content');
+  const calcEl = document.getElementById('proj-calc');
+
+  if(!Object.keys(holdings).length){
+    el.innerHTML='<p style="color:#8b949e;font-size:13px">No holdings yet. Tell Daleel to add stocks to your portfolio.</p>';
+    calcEl.style.display='none'; return;
   }
-  el.innerHTML=`<table class="port-table"><thead><tr><th>Symbol</th><th>Shares</th><th>Buy QAR</th><th>Target</th></tr></thead><tbody>${rows}</tbody></table><p style="color:#8b949e;font-size:12px;margin-top:10px">Updated: ${d.updated||'—'}</p>`;
+
+  window._portCache = {holdings, prices};
+  let rows='';
+
+  for(const [sym,h] of Object.entries(holdings)){
+    const curr = prices[sym];
+    const tgt  = h.target;
+
+    // Current P&L (net of buy + sell commission)
+    let currCell = '<td>—</td><td>—</td>';
+    if(curr !== undefined){
+      const buyCom  = h.buy_price * h.shares * COMMISSION;
+      const sellCom = curr * h.shares * COMMISSION;
+      const net = (curr - h.buy_price) * h.shares - buyCom - sellCom;
+      const pct = ((curr - h.buy_price) / h.buy_price * 100).toFixed(2);
+      currCell = `<td>${curr.toFixed(3)}</td>`+
+        `<td style="${pnlColor(net)}">${fmtQar(net)}<br><span style="font-size:11px">(${net>=0?'+':''}${pct}%)</span></td>`;
+    }
+
+    // Projected profit at target
+    let projCell = '<td>—</td>';
+    if(tgt){
+      const buyCom  = h.buy_price * h.shares * COMMISSION;
+      const sellCom = tgt * h.shares * COMMISSION;
+      const net = (tgt - h.buy_price) * h.shares - buyCom - sellCom;
+      const pct = ((tgt - h.buy_price) / h.buy_price * 100).toFixed(2);
+      projCell = `<td style="${pnlColor(net)}">${fmtQar(net)}<br><span style="font-size:11px">(${net>=0?'+':''}${pct}%)</span></td>`;
+    }
+
+    rows += `<tr>
+      <td><b>${sym}</b></td>
+      <td>${h.shares.toLocaleString()}</td>
+      <td>${h.buy_price.toFixed(3)}</td>
+      ${currCell}
+      <td>
+        <span id="tgt-${sym}">${tgt ? tgt.toFixed(3) : '—'}</span>
+        <button class="btn" style="padding:2px 6px;font-size:11px;margin-left:6px" onclick="editTarget('${sym}')">Edit</button>
+      </td>
+      ${projCell}
+    </tr>`;
+  }
+
+  el.innerHTML = `
+    <div style="font-size:11px;color:#6e7681;margin-bottom:8px">Commission: 0.0275% per transaction (Group Securities) — deducted from both buy &amp; sell</div>
+    <div style="overflow-x:auto">
+    <table class="port-table">
+      <thead><tr>
+        <th>Symbol</th><th>Shares</th><th>Buy QAR</th><th>Current</th>
+        <th>Current P&amp;L</th><th>Target</th><th>Proj. Profit at Target</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <p style="color:#8b949e;font-size:12px;margin-top:10px">Updated: ${d.updated||'—'}</p>`;
+
+  // Populate calculator
+  const sel = document.getElementById('calc-sym');
+  sel.innerHTML = Object.keys(holdings).map(s=>`<option value="${s}">${s}</option>`).join('');
+  function syncCalcDefaults(){
+    const s = sel.value; const h = holdings[s];
+    if(!h) return;
+    document.getElementById('calc-shares').value = h.shares;
+    document.getElementById('calc-price').value  = h.target ? h.target.toFixed(3) : (prices[s] ? prices[s].toFixed(3) : '');
+    document.getElementById('calc-result').innerHTML = '';
+  }
+  sel.onchange = syncCalcDefaults;
+  syncCalcDefaults();
+  calcEl.style.display = 'block';
+}
+
+async function editTarget(sym){
+  const cur = window._portCache?.holdings?.[sym]?.target || '';
+  const val = prompt(`Target price for ${sym} (QAR):`, cur ? cur.toFixed(3) : '');
+  if(val === null || val.trim() === '') return;
+  const num = parseFloat(val);
+  if(isNaN(num) || num <= 0){ toast('Invalid price'); return; }
+  const d = await fetch('/api/portfolio').then(r=>r.json());
+  if(!d.holdings[sym]) return;
+  d.holdings[sym].target = num;
+  await fetch('/api/portfolio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+  toast(`Target for ${sym} set to ${num.toFixed(3)} QAR`);
+  loadPortfolio();
+}
+
+function calcProjection(){
+  const sym    = document.getElementById('calc-sym').value;
+  const price  = parseFloat(document.getElementById('calc-price').value);
+  const shares = parseInt(document.getElementById('calc-shares').value);
+  const el     = document.getElementById('calc-result');
+  if(!sym||isNaN(price)||isNaN(shares)||shares<=0||price<=0){
+    el.innerHTML='<p style="color:#f85149;font-size:13px">Fill in all fields with valid values.</p>'; return;
+  }
+  const h = window._portCache?.holdings?.[sym];
+  if(!h){ el.innerHTML='<p style="color:#f85149;font-size:13px">No data.</p>'; return; }
+
+  const buyVal  = h.buy_price * shares;
+  const sellVal = price * shares;
+  const buyCom  = buyVal  * COMMISSION;
+  const sellCom = sellVal * COMMISSION;
+  const gross   = (price - h.buy_price) * shares;
+  const net     = gross - buyCom - sellCom;
+  const pct     = ((price - h.buy_price) / h.buy_price * 100);
+
+  el.innerHTML = `
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;font-size:13px;max-width:380px">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:5px 20px;line-height:1.9">
+        <span style="color:#8b949e">Sell Value</span>
+        <span>QAR ${sellVal.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+        <span style="color:#8b949e">Gross Profit</span>
+        <span style="${pnlColor(gross)}">${fmtQar(gross)}</span>
+        <span style="color:#8b949e">Buy Commission (paid)</span>
+        <span style="color:#f85149">− QAR ${buyCom.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+        <span style="color:#8b949e">Sell Commission</span>
+        <span style="color:#f85149">− QAR ${sellCom.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+        <span style="font-weight:700;border-top:1px solid #30363d;padding-top:6px">Net Profit</span>
+        <span style="${pnlColor(net)};font-weight:700;border-top:1px solid #30363d;padding-top:6px">
+          ${fmtQar(net)} (${pct>=0?'+':''}${pct.toFixed(2)}%)
+        </span>
+      </div>
+      <button class="btn btn-blue" style="margin-top:14px;width:100%;justify-content:center"
+        onclick="recordSale('${sym}',${shares},${price})">
+        Record Sale — deduct ${shares.toLocaleString()} shares from portfolio
+      </button>
+    </div>`;
+}
+
+async function recordSale(sym, shares, price){
+  if(!confirm(`Record sale of ${shares.toLocaleString()} ${sym} shares at ${price} QAR?`)) return;
+  const d = await fetch('/api/portfolio/sell',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({symbol:sym, shares:shares, price:price})
+  }).then(r=>r.json());
+  if(d.ok){
+    const msg = d.remaining > 0
+      ? `Sold. Net profit: QAR ${d.profit.toLocaleString('en',{minimumFractionDigits:2})}. ${d.remaining.toLocaleString()} shares remaining.`
+      : `Sold. Net profit: QAR ${d.profit.toLocaleString('en',{minimumFractionDigits:2})}. Position closed.`;
+    toast(msg);
+    document.getElementById('calc-result').innerHTML='';
+    loadPortfolio();
+  } else {
+    toast('Error: '+(d.error||'failed'));
+  }
 }
 
 async function loadNotes(){
