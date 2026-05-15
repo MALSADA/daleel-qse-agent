@@ -1,0 +1,15 @@
+[Unit]
+Description=Daleel QSE Chat Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/%u/qse-agent/qse_server.py
+WorkingDirectory=/home/%u/qse-agent
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/qse_server.log
+StandardError=append:/tmp/qse_server.log
+
+[Install]
+WantedBy=default.target
