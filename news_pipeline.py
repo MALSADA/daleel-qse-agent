@@ -80,11 +80,27 @@ def run_pipeline(symbols=None):
     log("Initializing database...")
     init_db()
 
-    # 1b. Update price history from Yahoo Finance (incremental — fills only missing dates)
+    # 1b. Fetch live listed companies from QSE (authoritative source)
+    log("Fetching listed companies from QSE...")
+    listed_companies = []
+    try:
+        from qse_scraper import fetch_listed_companies
+        listed_companies = fetch_listed_companies()
+        if listed_companies:
+            log(f"  {len(listed_companies)} companies listed on QSE.")
+        else:
+            raise ValueError("Empty company list returned")
+    except Exception as e:
+        log(f"  WARNING: could not fetch listed companies ({e}), using fallback.")
+        from news_scraper import QSE_ALIASES
+        listed_companies = [{"symbol": s, "name": s, "sector": ""} for s in QSE_ALIASES.keys()]
+
+    listed_symbols = [c["symbol"] for c in listed_companies]
+
+    # 1c. Update price history from Yahoo Finance (incremental — fills only missing dates)
     log("Updating price history from Yahoo Finance...")
     try:
-        from news_scraper import QSE_ALIASES
-        result = backfill_history(list(QSE_ALIASES.keys()), days=365)
+        result = backfill_history(listed_symbols, days=365)
         covered = sum(1 for v in result.values() if v > 0)
         log(f"  Price history updated: {covered}/{len(result)} symbols.")
     except Exception as e:
@@ -151,7 +167,7 @@ def run_pipeline(symbols=None):
         log("Running RAG analysis for QSE stocks...")
         t0 = time.time()
         try:
-            recs = analyze_all(symbols)
+            recs = analyze_all(symbols or listed_symbols)
             log(f"  {len(recs)} recommendations in {round(time.time()-t0,1)}s")
             buy_count  = sum(1 for r in recs if r["recommendation"] == "BUY")
             sell_count = sum(1 for r in recs if r["recommendation"] == "SELL")

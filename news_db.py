@@ -174,6 +174,11 @@ def save_recommendation(rec: dict):
     now = datetime.now().isoformat(timespec="seconds")
     run_date = datetime.now().strftime("%Y-%m-%d")
     with get_conn() as conn:
+        # One recommendation per stock per day — replace any existing entry
+        conn.execute(
+            "DELETE FROM recommendations WHERE stock_symbol = ? AND run_date = ?",
+            (rec["symbol"], run_date),
+        )
         conn.execute(
             """INSERT INTO recommendations
                (created_at, stock_symbol, stock_name, recommendation, sentiment_score,

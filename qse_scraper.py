@@ -216,6 +216,93 @@ def parse_raw(text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Listed companies
+# ---------------------------------------------------------------------------
+
+QSE_LISTED = "https://www.qe.com.qa/listed-companies"
+
+_SECTOR_MAP = {
+    "Banks & Financial Services": "Banking",
+    "Consumer Goods & Services":  "Consumer",
+    "Industrials":                "Industrials",
+    "Insurance":                  "Insurance",
+    "Real Estate":                "Real Estate",
+    "Telecoms":                   "Telecoms",
+    "Transportation":             "Transportation",
+}
+_SKIP_LINES = {"Submit", "Right Issues", "All", "Filter Listed Companies by Sector:"}
+
+
+def _parse_listed_companies(text: str) -> list[dict]:
+    """
+    Parse company list from QSE listed-companies page inner_text.
+    State machine: sector header → symbol → name → symbol → ...
+    """
+    # Start after the filter "Submit" button (avoids the dropdown sector labels)
+    start = text.find("Submit\n")
+    if start == -1:
+        start = 0
+    section = text[start:]
+
+    # Stop before the footer
+    for footer in ("Qatar Stock Exchange ©", "*About QFC", "Markets\n Participants"):
+        idx = section.find(footer)
+        if idx != -1:
+            section = section[:idx]
+            break
+
+    lines = [l.strip() for l in section.splitlines() if l.strip()]
+
+    companies = []
+    current_sector = None
+    pending_symbol = None
+
+    for line in lines:
+        if line in _SKIP_LINES:
+            continue
+        if line in _SECTOR_MAP:
+            current_sector = _SECTOR_MAP[line]
+            pending_symbol = None
+            continue
+        if current_sector is None:
+            continue
+        if pending_symbol:
+            # This line is the company name following a symbol
+            companies.append({"symbol": pending_symbol, "name": line, "sector": current_sector})
+            pending_symbol = None
+        elif re.match(r'^[A-Z][A-Z0-9]{1,5}$', line):
+            pending_symbol = line
+
+    return companies
+
+
+def fetch_listed_companies() -> list[dict]:
+    """
+    Fetch the current list of companies listed on QSE.
+    Returns [{symbol, name, sector}] — authoritative, live from QSE website.
+    Falls back to empty list on failure (caller should handle).
+    """
+    with sync_playwright() as p:
+        browser = launch_browser(p)
+        try:
+            ctx = browser.new_context(user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ))
+            page = ctx.new_page()
+            print("[qse] Fetching listed companies...", file=sys.stderr)
+            page.goto(QSE_LISTED, wait_until="domcontentloaded", timeout=30_000)
+            time.sleep(JS_WAIT)
+            text = page_text(page)
+        finally:
+            browser.close()
+
+    companies = _parse_listed_companies(text)
+    print(f"[qse] {len(companies)} listed companies found.", file=sys.stderr)
+    return companies
+
+
+# ---------------------------------------------------------------------------
 # Fetch
 # ---------------------------------------------------------------------------
 
