@@ -62,6 +62,8 @@ The codebase runs on Python 3.10 which doesn't evaluate `X | None` at runtime wh
 
 ## Known Issues and Limitations
 
+> A detailed, audited limitations report with concrete solutions for every issue is in **`LIMITATIONS_REPORT.md`**. The summary below highlights the most critical items.
+
 ### 1. Qatar TV and Al Watan may have low article yield
 QTV and Al Watan don't have reliably documented RSS URLs. The scrapers try 2-3 URL variants each. If all fail, HTML fallback activates but only gets titles (no body text) without deeper scraping. This means those articles get embedded with title-only context, which reduces RAG retrieval quality for them.
 
