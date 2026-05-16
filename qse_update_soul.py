@@ -328,6 +328,14 @@ def main():
     with open(SOUL_PATH, "w") as f:
         f.write(soul_content)
 
+    # Persist today's prices for historical trend analysis
+    try:
+        from news_db import save_price_snapshot
+        save_price_snapshot(stocks)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Price snapshot saved ({len(stocks)} symbols).", flush=True)
+    except Exception as e:
+        print(f"[!] Could not save price snapshot: {e}", file=sys.stderr)
+
     # Check price targets and fire Discord alerts
     check_alerts(holdings, price_map)
 

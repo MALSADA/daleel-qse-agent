@@ -203,6 +203,29 @@ def send_discord_digest(recommendations: list[dict], scrape_stats: dict, report_
 
 
 # ---------------------------------------------------------------------------
+# Pipeline failure alert
+# ---------------------------------------------------------------------------
+
+def send_discord_alert(message: str) -> bool:
+    """Send a plain-text alert to the configured Discord channel (no attachment)."""
+    if not DISCORD_BOT_TOKEN:
+        print("[discord] No bot token, cannot send alert.", file=sys.stderr)
+        return False
+    try:
+        r = requests.post(
+            f"{DISCORD_API}/channels/{DISCORD_CHANNEL_ID}/messages",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            json={"content": message[:1990]},
+            timeout=15,
+        )
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[discord] Alert send failed: {e}", file=sys.stderr)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 

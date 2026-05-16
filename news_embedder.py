@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
 Embedding pipeline: sentence-transformers → ChromaDB.
-Model: paraphrase-multilingual-MiniLM-L12-v2 (Arabic + English, 384 dims).
+Model: intfloat/multilingual-e5-base (Arabic + English, 768 dims, 512 token limit).
+
+e5 models require specific prefixes for best retrieval quality:
+  - Passages stored in the index: "passage: {text}"
+  - Queries at search time:       "query: {text}"
 """
 
 import sys
+import threading
 from pathlib import Path
 
 from typing import Optional
@@ -17,34 +22,41 @@ from news_db import get_unembedded_articles, mark_embedded
 
 CHROMA_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "qse_news"
-MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
-BATCH_SIZE = 32
+MODEL_NAME = "intfloat/multilingual-e5-base"
+BATCH_SIZE = 16  # e5-base is larger; smaller batches avoid OOM on CPU
 
 _model: Optional[SentenceTransformer] = None
+_model_lock = threading.Lock()
 _client = None
 _collection = None
+_collection_lock = threading.Lock()
 
 
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        print(f"[embedder] Loading model {MODEL_NAME}...", file=sys.stderr)
-        _model = SentenceTransformer(MODEL_NAME)
+        with _model_lock:
+            if _model is None:
+                print(f"[embedder] Loading model {MODEL_NAME} (CPU)...", file=sys.stderr)
+                # Force CPU so Ollama keeps exclusive GPU access during analysis
+                _model = SentenceTransformer(MODEL_NAME, device="cpu")
     return _model
 
 
 def _get_collection():
     global _client, _collection
     if _collection is None:
-        CHROMA_DIR.mkdir(exist_ok=True)
-        _client = chromadb.PersistentClient(
-            path=str(CHROMA_DIR),
-            settings=Settings(anonymized_telemetry=False),
-        )
-        _collection = _client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
-        )
+        with _collection_lock:
+            if _collection is None:
+                CHROMA_DIR.mkdir(exist_ok=True)
+                _client = chromadb.PersistentClient(
+                    path=str(CHROMA_DIR),
+                    settings=Settings(anonymized_telemetry=False),
+                )
+                _collection = _client.get_or_create_collection(
+                    name=COLLECTION_NAME,
+                    metadata={"hnsw:space": "cosine"},
+                )
     return _collection
 
 
@@ -61,7 +73,8 @@ def embed_pending(batch_size: int = BATCH_SIZE) -> int:
 
     for i in range(0, len(articles), batch_size):
         batch = articles[i : i + batch_size]
-        texts = [f"{a['title']} {a['body']}"[:1024] for a in batch]
+        # e5 models require "passage: " prefix for indexed documents
+        texts = [f"passage: {a['title']} {a['body']}"[:512] for a in batch]
         ids = [str(a["id"]) for a in batch]
         metadatas = [
             {
@@ -97,7 +110,8 @@ def query(text: str, n_results: int = 10, where: Optional[dict] = None) -> list[
     model = _get_model()
     collection = _get_collection()
 
-    embedding = model.encode([text], show_progress_bar=False).tolist()[0]
+    # e5 models require "query: " prefix for search queries
+    embedding = model.encode([f"query: {text}"], show_progress_bar=False).tolist()[0]
 
     kwargs: dict = {"query_embeddings": [embedding], "n_results": n_results}
     if where:
@@ -121,6 +135,19 @@ def query(text: str, n_results: int = 10, where: Optional[dict] = None) -> list[
             }
         )
     return items
+
+
+def delete_embeddings(article_ids: list[int]):
+    """Remove embeddings for the given article IDs from ChromaDB."""
+    if not article_ids:
+        return
+    collection = _get_collection()
+    str_ids = [str(i) for i in article_ids]
+    try:
+        collection.delete(ids=str_ids)
+        print(f"[embedder] Deleted {len(str_ids)} embeddings from ChromaDB.", file=sys.stderr)
+    except Exception as e:
+        print(f"[embedder] Warning: could not delete embeddings: {e}", file=sys.stderr)
 
 
 def collection_count() -> int:

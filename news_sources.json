@@ -1,0 +1,606 @@
+{
+  "version": "1.1",
+  "updated": "2026-05-16",
+  "description": "News source registry for the Daleel QSE news pipeline. To add a source: append an entry to the array and set enabled=true. To pause a source: set enabled=false. The pipeline reads this file on every run — no code changes needed.",
+  "sources": [
+
+    {
+      "_comment": "===== TIER 1 — DIRECT QSE MARKET MOVERS =====",
+      "id": "qse_official",
+      "name": "Qatar Stock Exchange",
+      "tier": 1,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.qe.com.qa/rss"
+      ],
+      "html_fallback_url": "https://www.qe.com.qa/web/guest/listed-companies",
+      "html_article_selectors": ["a[href*='news']", ".portlet-body a", "article a", "h2 a"],
+      "notes": "Primary source for official QSE listed-company announcements. RSS URL unverified — HTML fallback scrapes the listed-companies page."
+    },
+
+    {
+      "id": "qna_en",
+      "name": "Qatar News Agency (English)",
+      "tier": 1,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.qna.org.qa/en/rss/latestNews",
+        "https://www.qna.org.qa/en/rss/economy",
+        "https://www.qna.org.qa/rss/en/latest",
+        "https://www.qna.org.qa/rss/en/economy"
+      ],
+      "html_fallback_url": "https://www.qna.org.qa/en/News-Area/News",
+      "html_article_selectors": ["a[href*='/News-Area/News/']", ".news-item a", "article a", "h2 a", "h3 a"],
+      "notes": "QNA changed RSS path structure — multiple variants tried. HTML fallback scrapes article listing. Visit https://www.qna.org.qa/en/RSS-Feeds to find current feed paths."
+    },
+
+    {
+      "id": "qna_ar",
+      "name": "Qatar News Agency (Arabic)",
+      "tier": 1,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://www.qna.org.qa/ar/rss/latestNews",
+        "https://www.qna.org.qa/ar/rss/economy",
+        "https://www.qna.org.qa/rss/ar/latest",
+        "https://www.qna.org.qa/rss/ar/economy"
+      ],
+      "html_fallback_url": "https://www.qna.org.qa/ar",
+      "html_article_selectors": ["a[href*='/ar/']", ".news-item a", "article a", "h2 a", "h3 a"],
+      "notes": "Arabic edition of QNA. Critical for local corporate announcements not published in English."
+    },
+
+    {
+      "id": "qatarenergy",
+      "name": "QatarEnergy",
+      "tier": 1,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [],
+      "html_fallback_url": "https://www.qatarenergy.qa/en/MediaCentre/Pages/default.aspx",
+      "html_article_selectors": [".ms-rtestate-field a", ".news-listing a", "article a", ".content-zone a", "h2 a", "h3 a"],
+      "notes": "No known RSS feed. SharePoint-based portal — HTML scraper extracts press releases and announcements. Highly relevant for LNG, energy, and IQCD/MPHC/QGTS stocks."
+    },
+
+    {
+      "id": "qcb",
+      "name": "Qatar Central Bank",
+      "tier": 1,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [],
+      "html_fallback_url": "https://www.qcb.gov.qa/English/Pages/default.aspx",
+      "html_article_selectors": [".ms-rtestate-field a", ".news-listing a", "a[href*='news']", "a[href*='press']", "h2 a", "h3 a"],
+      "notes": "No known RSS feed. SharePoint portal. Key for monetary policy, banking sector news, and bank stocks (QNBK, CBQK, DHBK, etc.)."
+    },
+
+    {
+      "id": "mof_qatar",
+      "name": "Ministry of Finance Qatar",
+      "tier": 1,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [],
+      "html_fallback_url": "https://www.mof.gov.qa/en/Pages/default.aspx",
+      "html_article_selectors": [".ms-rtestate-field a", "a[href*='news']", "a[href*='press']", ".content a", "h2 a", "h3 a"],
+      "notes": "No known RSS feed. Budget, fiscal policy, sovereign fund announcements."
+    },
+
+    {
+      "_comment": "===== TIER 2 — MAJOR QATAR NEWS OUTLETS =====",
+      "id": "peninsula",
+      "name": "The Peninsula Qatar",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://thepeninsulaqatar.com/rss",
+        "https://thepeninsulaqatar.com/feed",
+        "https://thepeninsulaqatar.com/rss/business"
+      ],
+      "html_fallback_url": "https://thepeninsulaqatar.com/category/business",
+      "html_article_selectors": [".item a", ".article-title a", ".entry-title a", "article a", "h2 a"],
+      "notes": "English-language Qatar business newspaper. Typically accessible with no geo-blocking."
+    },
+
+    {
+      "id": "gulf_times",
+      "name": "Gulf Times",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.gulf-times.com/rss/feed/HomePage.xml",
+        "https://www.gulf-times.com/rss/",
+        "https://www.gulf-times.com/rss/feed/Business.xml"
+      ],
+      "html_fallback_url": "https://www.gulf-times.com/section/business",
+      "html_article_selectors": [".article-title a", ".entry-title a", "article a", "h2 a", "h3 a"],
+      "notes": "Qatar-focused English daily. Strong QSE and business coverage."
+    },
+
+    {
+      "id": "lusail",
+      "name": "Lusail News",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://lusailnews.net/rss",
+        "https://lusailnews.net/feed",
+        "https://lusailnews.net/?feed=rss2"
+      ],
+      "html_fallback_url": "https://lusailnews.net/category/economy",
+      "html_article_selectors": ["article a", ".post-title a", "h2 a", "h3 a"],
+      "notes": "Arabic-language Qatari news site. Business/economy section is relevant."
+    },
+
+    {
+      "id": "doha_news",
+      "name": "Doha News",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://dohanews.co/feed/",
+        "https://dohanews.co/feed/rss/",
+        "https://dohanews.co/category/business/feed/"
+      ],
+      "html_fallback_url": "https://dohanews.co/category/business/",
+      "html_article_selectors": ["article a", ".entry-title a", "h2 a", "h3 a"],
+      "notes": "Independent English-language Qatar news. Good for economic/social context."
+    },
+
+    {
+      "id": "al_sharq",
+      "name": "Al Sharq",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://al-sharq.com/rss",
+        "https://al-sharq.com/feed",
+        "https://al-sharq.com/?feed=rss2"
+      ],
+      "html_fallback_url": "https://al-sharq.com/category/economy",
+      "html_article_selectors": ["article a", ".post-title a", ".article-title a", "h2 a", "h3 a"],
+      "notes": "Arabic Qatari newspaper. Economy section covers QSE stocks."
+    },
+
+    {
+      "id": "al_raya",
+      "name": "Al Raya",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://www.raya.com/rss",
+        "https://www.raya.com/feed",
+        "https://www.raya.com/?feed=rss2"
+      ],
+      "html_fallback_url": "https://www.raya.com",
+      "html_article_selectors": ["article a", ".post-title a", "h2 a", "h3 a"],
+      "notes": "Arabic Qatari daily. Covers financial and economic news."
+    },
+
+    {
+      "id": "google_news_en",
+      "name": "Google News — Qatar Finance (English)",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://news.google.com/rss/search?q=Qatar+stock+exchange+QSE&hl=en&gl=QA&ceid=QA:en",
+        "https://news.google.com/rss/search?q=Qatar+finance+economy&hl=en&gl=QA&ceid=QA:en"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "Confirmed working. Aggregates Qatar financial news from many sources. High volume (100+ articles). No geo-blocking."
+    },
+
+    {
+      "id": "google_news_ar",
+      "name": "Google News — Qatar Finance (Arabic)",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://news.google.com/rss/search?q=بورصة+قطر&hl=ar&gl=QA&ceid=QA:ar",
+        "https://news.google.com/rss/search?q=اقتصاد+قطر&hl=ar&gl=QA&ceid=QA:ar"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "Arabic counterpart of google_news_en. Aggregates Arabic-language Qatar news. Bypasses direct DNS issues with individual Arabic sources."
+    },
+
+    {
+      "_comment": "===== TIER 3 — GCC / REGIONAL FINANCIAL NEWS =====",
+      "id": "aljazeera_en",
+      "name": "Al Jazeera (English)",
+      "tier": 3,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.aljazeera.com/xml/rss/all.xml"
+      ],
+      "html_fallback_url": "https://www.aljazeera.com/economy/",
+      "html_article_selectors": [".article-card a", ".article-card__title a", "article a", "h3 a"],
+      "notes": "Currently the only reliably working feed. All.xml confirmed working."
+    },
+
+    {
+      "id": "aljazeera_ar",
+      "name": "Al Jazeera (Arabic)",
+      "tier": 3,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://arabic.aljazeera.net/xml/rss/all.xml",
+        "https://arabic.aljazeera.net/xml/rss/economy.xml"
+      ],
+      "html_fallback_url": "https://arabic.aljazeera.net/economy/",
+      "html_article_selectors": [".article-card a", "article a", "h3 a"],
+      "notes": "DNS failure reported from this machine as of 2026-05-16. arabic.aljazeera.net may be geo-blocked or require different DNS resolver. Test with: curl -v https://arabic.aljazeera.net/xml/rss/all.xml"
+    },
+
+    {
+      "id": "arab_news",
+      "name": "Arab News",
+      "tier": 3,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.arabnews.com/rss.xml",
+        "https://www.arabnews.com/taxonomy/term/317/0/feed"
+      ],
+      "html_fallback_url": "https://www.arabnews.com/economy",
+      "html_article_selectors": ["article a", ".article-title a", "h2 a", "h3 a"],
+      "notes": "Pan-Arab English newspaper. Good GCC macro coverage."
+    },
+
+    {
+      "id": "zawya",
+      "name": "Zawya",
+      "tier": 3,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.zawya.com/rss",
+        "https://www.zawya.com/rss/markets",
+        "https://www.zawya.com/feeds/rss"
+      ],
+      "html_fallback_url": "https://www.zawya.com/en/markets/qatar",
+      "html_article_selectors": ["article a", ".article-title a", ".story-title a", "h2 a", "h3 a"],
+      "notes": "Thomson Reuters MENA financial news. Strong QSE coverage when accessible."
+    },
+
+    {
+      "id": "asharq_business",
+      "name": "Asharq Business (Bloomberg)",
+      "tier": 3,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://asharqbusiness.com/feeds/rss/",
+        "https://asharqbusiness.com/feed/"
+      ],
+      "html_fallback_url": "https://asharqbusiness.com/markets/",
+      "html_article_selectors": ["article a", ".article-title a", "h2 a", "h3 a"],
+      "notes": "Arabic Bloomberg-licensed content. Strong regional financial coverage."
+    },
+
+    {
+      "id": "meed",
+      "name": "MEED",
+      "tier": 3,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.meed.com/feed/",
+        "https://www.meed.com/rss"
+      ],
+      "html_fallback_url": "https://www.meed.com/sectors/oil-gas-petrochemicals/",
+      "html_article_selectors": ["article a", ".article-title a", "h2 a", "h3 a"],
+      "notes": "Middle East business intelligence. Infrastructure, energy project news relevant to IQCD, MPHC, GISS."
+    },
+
+    {
+      "id": "saudi_gazette_biz",
+      "name": "Saudi Gazette Business",
+      "tier": 3,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://saudigazette.com.sa/rssFeed/Business",
+        "https://saudigazette.com.sa/rssFeed/latest"
+      ],
+      "html_fallback_url": "https://saudigazette.com.sa/section/business",
+      "html_article_selectors": ["article a", ".article-title a", "h2 a", "h3 a"],
+      "notes": "GCC regional business coverage. Useful for macro context (Saudi / oil sector)."
+    },
+
+    {
+      "_comment": "===== TIER 4 — GLOBAL MACRO / MARKETS =====",
+      "id": "reuters_biz",
+      "name": "Reuters Business & Finance",
+      "tier": 4,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://news.google.com/rss/search?q=reuters+Qatar+energy+finance&hl=en&gl=QA&ceid=QA:en"
+      ],
+      "html_fallback_url": "https://www.reuters.com/business/",
+      "html_article_selectors": ["article a", "[data-testid='Heading'] a", "h3 a", "h2 a"],
+      "notes": "feeds.reuters.com is discontinued. Using Google News to surface Reuters articles about Qatar/energy. Direct reuters.com HTML requires JS rendering."
+    },
+
+    {
+      "id": "bloomberg_markets",
+      "name": "Bloomberg Markets",
+      "tier": 4,
+      "enabled": true,
+      "default_language": "en",
+      "fetch_body": false,
+      "rss_urls": [
+        "https://feeds.bloomberg.com/markets/news.rss"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "May return 401 or redirect without auth. fetch_body disabled — paywall blocks full article access."
+    },
+
+    {
+      "id": "cnbc_markets",
+      "name": "CNBC Markets",
+      "tier": 4,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+        "https://www.cnbc.com/id/10000664/device/rss/rss.html"
+      ],
+      "html_fallback_url": "https://www.cnbc.com/markets/",
+      "html_article_selectors": ["article a", ".Card-title a", "h3 a", "h2 a"],
+      "notes": "Global markets feed. LNG, oil price, and Fed rate decisions impact QSE."
+    },
+
+    {
+      "id": "ft_markets",
+      "name": "Financial Times Markets",
+      "tier": 4,
+      "enabled": true,
+      "default_language": "en",
+      "fetch_body": false,
+      "rss_urls": [
+        "https://www.ft.com/markets?format=rss",
+        "https://www.ft.com/rss/home/uk"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "fetch_body disabled — FT paywall blocks full article access. RSS provides headline+summary only."
+    },
+
+    {
+      "id": "investing_com",
+      "name": "Investing.com News",
+      "tier": 4,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.investing.com/rss/news.rss",
+        "https://www.investing.com/rss/news_14.rss"
+      ],
+      "html_fallback_url": "https://www.investing.com/news/commodities-news",
+      "html_article_selectors": ["article a", ".textDiv a", "h2 a", "h3 a"],
+      "notes": "Good for oil, gold, and currency news that influences QSE sentiment."
+    },
+
+    {
+      "id": "oilprice",
+      "name": "OilPrice.com",
+      "tier": 4,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://oilprice.com/rss/main",
+        "https://oilprice.com/rss/energy-general"
+      ],
+      "html_fallback_url": "https://oilprice.com/latest-energy-news/",
+      "html_article_selectors": ["article a", ".categoryArticle__title a", "h2 a", "h3 a"],
+      "notes": "Essential for LNG/oil price context. Directly impacts QGTS, IQCD, MPHC, QatarEnergy-linked stocks."
+    },
+
+    {
+      "_comment": "===== TIER 5 — ENERGY / MACRO / SPECIALIZED =====",
+      "id": "opec",
+      "name": "OPEC",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.opec.org/opec_web/en/press_room/rss.htm"
+      ],
+      "html_fallback_url": "https://www.opec.org/opec_web/en/press_room/",
+      "html_article_selectors": ["a[href*='press']", "a[href*='news']", "article a", "h2 a"],
+      "notes": "OPEC production decisions are high-impact for all Qatar energy and petrochemical stocks."
+    },
+
+    {
+      "id": "imf",
+      "name": "IMF News",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.imf.org/en/News/RSS"
+      ],
+      "html_fallback_url": "https://www.imf.org/en/News",
+      "html_article_selectors": ["article a", ".result-row a", "h3 a", "h2 a"],
+      "notes": "Macro context: GCC growth forecasts, oil price outlook, sovereign wealth."
+    },
+
+    {
+      "id": "world_bank",
+      "name": "World Bank News",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.worldbank.org/en/news/all/rss"
+      ],
+      "html_fallback_url": "https://www.worldbank.org/en/region/mena/news",
+      "html_article_selectors": ["article a", ".search-result a", "h3 a"],
+      "notes": "MENA economic context. Lower frequency but useful for macro trend analysis."
+    },
+
+    {
+      "id": "federal_reserve",
+      "name": "Federal Reserve",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.federalreserve.gov/feeds/press_all.xml"
+      ],
+      "html_fallback_url": "https://www.federalreserve.gov/newsevents/pressreleases.htm",
+      "html_article_selectors": ["a[href*='press']", ".itemTitle a", "h3 a", "h2 a"],
+      "notes": "Fed rate decisions move QSE bank stocks and QAR-pegged currency dynamics. Low volume, high impact."
+    },
+
+    {
+      "id": "tradingeconomics",
+      "name": "TradingEconomics",
+      "tier": 5,
+      "enabled": false,
+      "default_language": "en",
+      "rss_urls": [
+        "https://api.tradingeconomics.com/feed"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "DISABLED — requires free API key from tradingeconomics.com. Register, add key to .env as TRADING_ECONOMICS_KEY, then re-enable."
+    },
+
+    {
+      "_comment": "===== OPTIONAL — LNG / SHIPPING =====",
+      "id": "maritime_exec",
+      "name": "Maritime Executive",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.maritime-executive.com/rss"
+      ],
+      "html_fallback_url": "https://www.maritime-executive.com/article/",
+      "html_article_selectors": ["article a", ".article-title a", "h2 a", "h3 a"],
+      "notes": "LNG tanker shipping news. Directly relevant to Nakilat (QGTS) and Qatar Gas Transport."
+    },
+
+    {
+      "id": "hellenic_shipping",
+      "name": "Hellenic Shipping News",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.hellenicshippingnews.com/feed/"
+      ],
+      "html_fallback_url": "https://www.hellenicshippingnews.com/category/lng/",
+      "html_article_selectors": ["article a", ".entry-title a", "h2 a", "h3 a"],
+      "notes": "LNG shipping freight and charter rates. Relevant to QGTS."
+    },
+
+    {
+      "_comment": "===== OPTIONAL — COMMODITY / OIL FUTURES =====",
+      "id": "marketwatch",
+      "name": "MarketWatch Top Stories",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.marketwatch.com/rss/topstories"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "Global markets snapshot. Oil/commodities section useful for QSE macro context."
+    },
+
+    {
+      "id": "yahoo_finance",
+      "name": "Yahoo Finance",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://finance.yahoo.com/news/rssindex"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "High-volume feed. Good for oil, gas, and global macro. Filter by category in the analyzer."
+    },
+
+    {
+      "_comment": "===== OPTIONAL — GEOPOLITICAL RISK =====",
+      "id": "bbc_world",
+      "name": "BBC World News",
+      "tier": 5,
+      "enabled": true,
+      "default_language": "en",
+      "rss_urls": [
+        "https://feeds.bbci.co.uk/news/world/rss.xml",
+        "https://feeds.bbci.co.uk/news/business/rss.xml"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "Geopolitical risk (Middle East, sanctions, conflict). Impacts investor sentiment."
+    },
+
+    {
+      "id": "nytimes_world",
+      "name": "NYT World",
+      "tier": 5,
+      "enabled": false,
+      "fetch_body": false,
+      "default_language": "en",
+      "rss_urls": [
+        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "DISABLED — NYT paywall. If re-enabled, fetch_body must stay false."
+    },
+
+    {
+      "_comment": "===== OPTIONAL — AI / TECH (low direct QSE relevance, disabled by default) =====",
+      "id": "techcrunch",
+      "name": "TechCrunch",
+      "tier": 5,
+      "enabled": false,
+      "default_language": "en",
+      "rss_urls": [
+        "https://feeds.feedburner.com/TechCrunch"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "DISABLED — AI/tech news for semiconductor + tech sector macro context. Enable if tracking MEZA QSTP or tech investment themes."
+    },
+
+    {
+      "id": "theverge",
+      "name": "The Verge",
+      "tier": 5,
+      "enabled": false,
+      "default_language": "en",
+      "rss_urls": [
+        "https://www.theverge.com/rss/index.xml"
+      ],
+      "html_fallback_url": null,
+      "html_article_selectors": [],
+      "notes": "DISABLED — Low QSE relevance. Enable only for tech sector macro tracking."
+    }
+
+  ]
+}

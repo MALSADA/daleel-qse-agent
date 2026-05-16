@@ -68,11 +68,23 @@ def init_db():
                 run_date            TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS price_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol      TEXT NOT NULL,
+                date        TEXT NOT NULL,
+                close_price REAL NOT NULL,
+                change_pct  REAL,
+                volume      REAL,
+                trades      INTEGER,
+                UNIQUE(symbol, date)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_articles_source   ON articles(source);
             CREATE INDEX IF NOT EXISTS idx_articles_embedded ON articles(embedded);
             CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at);
             CREATE INDEX IF NOT EXISTS idx_recs_date   ON recommendations(run_date);
             CREATE INDEX IF NOT EXISTS idx_recs_symbol ON recommendations(stock_symbol);
+            CREATE INDEX IF NOT EXISTS idx_price_symbol ON price_history(symbol, date);
         """)
 
 
@@ -93,10 +105,17 @@ def article_exists(url: str) -> bool:
 
 
 def insert_article(article: dict):
-    """Insert article if not duplicate. Returns new row id or None if skipped."""
+    """Insert article if not duplicate (by URL or content). Returns new row id or None if skipped."""
     url = article["url"]
     if article_exists(url):
         return None
+    chash = content_hash(article.get("title", ""), article.get("body", ""))
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM articles WHERE content_hash = ?", (chash,)
+        ).fetchone()
+        if row:
+            return None
     now = datetime.now().isoformat(timespec="seconds")
     with get_conn() as conn:
         cur = conn.execute(
@@ -107,7 +126,7 @@ def insert_article(article: dict):
             (
                 url,
                 url_hash(url),
-                content_hash(article.get("title", ""), article.get("body", "")),
+                chash,
                 article.get("title", ""),
                 article.get("body", ""),
                 article["source"],
@@ -181,6 +200,59 @@ def get_today_recommendations() -> list[dict]:
         rows = conn.execute(
             "SELECT * FROM recommendations WHERE run_date = ? ORDER BY recommendation, sentiment_score DESC",
             (run_date,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_old_articles(days: int = 90) -> list[int]:
+    """
+    Delete articles scraped more than `days` ago.
+    Returns the list of deleted article IDs (for ChromaDB cleanup).
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM articles WHERE scraped_at < ?", (cutoff,)
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        if ids:
+            conn.execute(
+                f"DELETE FROM articles WHERE id IN ({','.join('?'*len(ids))})", ids
+            )
+    return ids
+
+
+def save_price_snapshot(stocks: list[dict]):
+    """Save today's closing prices. Safe to call multiple times — UNIQUE(symbol, date) prevents duplicates."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        conn.executemany(
+            """INSERT OR IGNORE INTO price_history
+               (symbol, date, close_price, change_pct, volume, trades)
+               VALUES (?,?,?,?,?,?)""",
+            [
+                (
+                    s["symbol"],
+                    today,
+                    s["last_price"],
+                    s.get("change_pct"),
+                    s.get("volume"),
+                    s.get("trades"),
+                )
+                for s in stocks
+                if s.get("symbol") and s.get("last_price") is not None
+            ],
+        )
+
+
+def get_price_history(symbol: str, days: int = 10) -> list[dict]:
+    """Return last N trading days of prices for a symbol, newest first."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT date, close_price, change_pct, volume, trades FROM price_history "
+            "WHERE symbol = ? ORDER BY date DESC LIMIT ?",
+            (symbol, days),
         ).fetchall()
         return [dict(r) for r in rows]
 

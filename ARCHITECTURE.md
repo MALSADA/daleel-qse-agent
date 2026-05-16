@@ -35,34 +35,38 @@ The system is built around three hard constraints:
 
 ## 3. Component Detail
 
-### Stage 1 — News Scraper (`news_scraper.py`)
+### Stage 1 — News Scraper (`news_scraper.py` + `news_sources.json`)
 
-**Responsibility:** Pull raw articles from 4 sources, normalize into a standard dict.
+**Responsibility:** Pull raw articles from all configured sources, normalize into a standard dict.
 
-**Sources and strategy:**
+**Source registry:** `news_sources.json`
+
+Sources are not hardcoded. Every source is an entry in `news_sources.json`. The scraper reads this file on each run — no code changes needed to add, remove, or pause a source.
+
+**Current source tiers:**
+
+| Tier | Focus | Examples |
+|------|-------|---------|
+| 1 | Direct QSE movers | QSE Official, QNA (EN+AR), QatarEnergy, QCB, MoF |
+| 2 | Qatar national press | The Peninsula, Gulf Times, Lusail, Doha News, Al Sharq, Al Raya |
+| 3 | GCC / regional | Al Jazeera (EN+AR), Arab News, Zawya, Asharq Business, MEED |
+| 4 | Global macro | Reuters, Bloomberg, CNBC, FT, Investing.com, OilPrice |
+| 5 | Energy / specialized | OPEC, IMF, World Bank, Fed, Maritime Executive, BBC World |
+
+**Per-source scraping strategy (generic, driven by config):**
 
 ```
-QNA (Qatar News Agency)
-  ├── RSS: /en/rss/latestNews, /en/rss/economy, /ar/rss/latestNews, /ar/rss/economy
-  └── HTML fallback: qna.org.qa/en/News-Area/News
-
-Al Jazeera
-  ├── RSS EN: aljazeera.com/xml/rss/all.xml + economy.xml
-  └── RSS AR: arabic.aljazeera.net/xml/rss/all.xml + economy.xml
-
-Qatar TV (QTV)
-  ├── RSS: qtv.com.qa/feeds/latest
-  └── HTML fallback: qtv.com.qa/news
-
-Al Watan (Arabic newspaper)
-  ├── RSS: alwatan.com.qa/rss (tries 3 URL variants)
-  └── HTML fallback: alwatan.com.qa (CSS selectors: article a, h2 a, h3 a)
+For each enabled source in news_sources.json:
+  ├── Try rss_urls in order → feedparser → collect all entries up to 40
+  └── If RSS yields 0 articles:
+      └── Fetch html_fallback_url → BeautifulSoup → extract links via
+          html_article_selectors (title-only articles, no body)
 ```
 
 **Per-article processing:**
-- Language detection: counts Arabic Unicode characters (U+0600–U+06FF); >20% → `ar`
-- Category classification: keyword matching against finance / regional / international / politics lists (supports both AR and EN keywords)
-- Entity extraction: scans title + body for QSE ticker symbols and company name aliases from the `QSE_ALIASES` dictionary (~25 major companies mapped)
+- Language detection: counts Arabic Unicode characters (U+0600–U+06FF); >20% → `ar`; overridden by `default_language` in source config
+- Category classification: keyword matching against finance / regional / international / politics lists (both AR and EN keywords)
+- Entity extraction: scans title + body for QSE ticker symbols and company name aliases from `QSE_ALIASES` (covers all 56 stocks)
 - URL deduplication: SHA-256 of URL, first 16 hex chars used as `url_hash` unique key
 
 **Output format (per article):**
@@ -70,11 +74,11 @@ Al Watan (Arabic newspaper)
 {
     "url":          str,    # canonical article URL
     "title":        str,    # article headline
-    "body":         str,    # up to 4000 chars of article text
-    "source":       str,    # "qna" | "aljazeera" | "qtv" | "alwatan"
+    "body":         str,    # up to 4000 chars (RSS body or empty for HTML-fallback articles)
+    "source":       str,    # source id from news_sources.json, e.g. "qna_en", "aljazeera_en"
     "published_at": str,    # ISO-8601 UTC or None
     "language":     str,    # "ar" | "en"
-    "category":     str,    # "finance" | "regional" | "international" | "politics" | "general"
+    "category":     str,    # "finance" | "regional" | "international" | "politics"
     "entities":     list,   # QSE ticker symbols found in text, e.g. ["QNBK", "ORDS"]
 }
 ```
@@ -142,11 +146,14 @@ scrape_runs (
 
 **Technology:** `sentence-transformers` + `ChromaDB` (persistent, local)
 
-**Embedding model:** `paraphrase-multilingual-MiniLM-L12-v2`
-- 117M parameters, 384-dimensional output
-- Supports 50+ languages including Arabic and English in the same vector space
-- Runs on CPU (~2-3 seconds per batch of 32 on modern hardware)
+**Embedding model:** `intfloat/multilingual-e5-base`
+- 278M parameters, 768-dimensional output, **512-token context window**
+- Purpose-built for retrieval tasks (trained with contrastive learning on query–passage pairs)
+- Supports 100+ languages including Arabic and English in the same vector space
+- Runs on CPU (~4-6 seconds per batch of 16 on modern hardware)
+- Requires specific prefixes: `"passage: "` for indexed documents, `"query: "` for search queries
 - No GPU required (though GPU speeds it up 10x)
+- **Replaced `paraphrase-multilingual-MiniLM-L12-v2`** which had a 128-token limit and silently truncated all article bodies, losing content beyond the first ~100 words
 
 **ChromaDB setup:**
 - Stored at `~/qse-agent/chroma_db/`
@@ -160,9 +167,9 @@ scrape_runs (
 
 **Text sent to the model:**
 ```
-"{title} {body}"[:1024]
+"passage: {title} {body}"[:512 chars]
 ```
-Truncated to 1024 chars — the model's optimal range. Full body is not needed since the title carries most of the semantic signal.
+The `"passage: "` prefix is required by the e5 model for indexed documents. Text is capped at 512 chars to stay within the model's 512-token context window. At search time, queries are prefixed with `"query: "` in `news_embedder.query()`.
 
 ---
 
@@ -242,14 +249,71 @@ requests.post(
 
 ---
 
-## 4. Technology Stack Summary
+## 4. Managing News Sources (`news_sources.json`)
+
+All news sources are declared in `news_sources.json`. The scraper reads this file on every pipeline run.
+
+### Source entry format
+
+```jsonc
+{
+  "id": "peninsula",           // stored as 'source' column in articles table
+  "name": "The Peninsula Qatar",
+  "tier": 2,                   // 1=QSE direct, 2=Qatar press, 3=GCC, 4=global, 5=specialized
+  "enabled": true,             // false = skipped without deleting the entry
+  "default_language": "en",   // "en" | "ar" | null (auto-detect from Unicode char ratio)
+  "rss_urls": [                // tried in order; all successful URLs contribute articles
+    "https://thepeninsulaqatar.com/rss"
+  ],
+  "html_fallback_url": "https://thepeninsulaqatar.com/category/business",
+                               // scraped only if ALL rss_urls yield 0 articles
+  "html_article_selectors": [  // CSS selectors tried in order on the HTML fallback page
+    ".article-title a", "h2 a", "h3 a"
+  ],
+  "notes": "..."               // human notes, ignored by code
+}
+```
+
+### How to add a source
+
+1. Open `news_sources.json`
+2. Append a new object to the `"sources"` array with at least `id`, `name`, `tier`, `enabled`, and either `rss_urls` or `html_fallback_url`
+3. Run `python3 news_scraper.py` to verify it works (outputs article count per source)
+4. Next pipeline run picks it up automatically
+
+### How to disable a source temporarily
+
+Set `"enabled": false`. The entry is preserved for reference and re-enabling later.
+
+### How to find RSS URLs for a site
+
+```bash
+# Check the HTML <head> for autodiscovery links:
+curl -s https://example.com | grep -i 'rss\|atom\|feed'
+# Or look at the page footer / sitemap:
+curl -s https://example.com/sitemap.xml | grep -i feed
+```
+
+### Known source issues (as of 2026-05-16)
+
+| Source ID | Issue | Resolution path |
+|-----------|-------|----------------|
+| `qna_en`, `qna_ar` | RSS 404 — URL structure changed | Visit qna.org.qa/en/RSS-Feeds, find current paths |
+| `aljazeera_ar` | DNS failure from this machine | Possible geo-block; try `curl -v` to test; consider VPN |
+| `qatarenergy`, `qcb`, `mof_qatar` | No RSS; HTML-only | SharePoint portals; selectors may need tuning |
+| `bloomberg_markets` | May require auth | Fails silently; re-enable after testing |
+| `tradingeconomics` | Requires API key | Add `TRADING_ECONOMICS_KEY` to `.env` first |
+
+---
+
+## 6. Technology Stack Summary
 
 | Layer | Technology | Why |
 |-------|-----------|-----|
 | Language | Python 3.10 | Already in use on the machine |
 | Web scraping | `requests` + `feedparser` + `BeautifulSoup/lxml` | RSS-first is fast and polite; HTML fallback handles JS-light sites |
 | QSE price scraping | `playwright` (Chromium) | QSE website is an Angular SPA requiring JS render |
-| Embeddings | `sentence-transformers` (MiniLM-L12-v2 multilingual) | Handles Arabic + English in one vector space, runs on CPU |
+| Embeddings | `sentence-transformers` (multilingual-e5-base) | 512-token limit, retrieval-optimised, Arabic + English in one vector space, runs on CPU |
 | Vector store | `ChromaDB` (persistent) | Local, no server process, Python-native, cosine similarity |
 | Relational DB | `SQLite` | Zero-config, WAL mode, sufficient for single-machine use |
 | LLM inference | `qwen2.5:7b` via `Ollama` | Already installed, 7B is reliable for structured output |
@@ -258,7 +322,7 @@ requests.post(
 
 ---
 
-## 5. Failure Modes and Mitigations
+## 7. Failure Modes and Mitigations
 
 | Failure | Effect | Mitigation |
 |---------|--------|-----------|
@@ -271,7 +335,7 @@ requests.post(
 
 ---
 
-## 6. Planned Enhancements (Next Phase)
+## 8. Planned Enhancements (Next Phase)
 
 - **Historical price data storage** — persist QSE prices to SQLite daily, enabling trend analysis in prompts
 - **Sector-level analysis** — group stocks by QSE sector before RAG retrieval for broader context
