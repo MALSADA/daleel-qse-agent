@@ -1,3 +1,9 @@
 playwright
 requests
 flask
+feedparser
+beautifulsoup4
+lxml
+chromadb
+sentence-transformers
+Pillow>=9.2.0

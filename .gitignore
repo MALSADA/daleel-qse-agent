@@ -1,6 +1,15 @@
+# Secrets — never commit
+.env
+
+# Generated data (machine-specific, too large for git)
+news.db
+chroma_db/
+reports/
+logs/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.env
-*.log
 *.json.bak
+.pytest_cache/
