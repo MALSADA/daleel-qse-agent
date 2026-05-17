@@ -1,25 +1,35 @@
-# Muraqib — Handover Document
+# Muraqib + Daleel — Agent Handover Document
 
 **Last updated:** 2026-05-17  
-**System:** Muraqib (مراقب) — QSE Gathering and Analysis System  
-**Repository:** https://github.com/MALSADA/information-gathering-system  
+**Systems:** Muraqib (مراقب) · Daleel (دليل) — QSE Intelligence Platform  
+**Repository remotes:**
+- `origin` → `daleel-qse-agent.git`
+- `igs` → `information-gathering-system.git`  
+
 **Machine:** `sadashi-CELJ10003` — Xeon E-2124G, 31 GB RAM, Quadro P2000 (5 GB VRAM), Ubuntu  
 **Working directory:** `~/qse-agent/`
 
 ---
 
-## What Muraqib Is
+## What This Platform Is
 
-**Muraqib** (Arabic: مراقب — "observer / watcher") is the intelligence sub-system of the Daleel QSE platform. It runs as a fully autonomous nightly batch job that:
+Two cooperating sub-systems for Qatar Stock Exchange (QSE) market intelligence:
 
-1. **Scrapes** Arabic and English news from 31 enabled sources across 5 tiers
-2. **Stores** deduplicated articles in SQLite
-3. **Embeds** articles using a multilingual sentence-transformer model → ChromaDB
-4. **Analyses** each of the 54 officially listed QSE stocks using RAG + a local LLM
-5. **Reports** results as a dark-theme HTML report delivered to Discord
-6. **Feeds** recommendations back into SOUL.md so the Daleel conversational agent can answer questions about them
+**Muraqib (مراقب — "observer")** — Fully autonomous nightly batch intelligence engine:
+1. Scrapes Arabic and English news from **38 enabled sources** across 5 tiers
+2. Stores deduplicated articles in SQLite with entity tags (which QSE stock each article is about)
+3. Embeds articles using multilingual sentence-transformer → ChromaDB vector store
+4. Analyses each of the **54 officially listed QSE stocks** using RAG + local LLM
+5. Reports results as a dark-theme HTML report delivered to Discord
+6. Feeds recommendations into SOUL.md so Daleel can answer questions about them
 
-Muraqib is completely separate from the Daleel web chat server (`qse_server.py`). They share the same machine and the same SOUL.md file, but have no runtime dependency on each other.
+**Daleel (دليل — "guide")** — Always-on conversational web interface:
+1. Flask web server on port 7400, exposed publicly via Cloudflare tunnel
+2. Users ask natural-language questions about live prices, portfolio, recommendations
+3. Context provided by SOUL.md (written by `qse_update_soul.py` every 2 min during market hours)
+4. Uses `qwen2.5:3b` (fast, fits entirely in 5 GB VRAM)
+
+The two systems are **independent at runtime** — they share SQLite and SOUL.md but neither calls the other. Either can be restarted without affecting the other.
 
 ---
 
@@ -41,8 +51,8 @@ Muraqib is completely separate from the Daleel web chat server (`qse_server.py`)
             ▼          ▼          ▼          ▼
        [Stage 1a]  [Stage 1b]  [Stage 1c]  [Stage 1d]
        Scrape      Listed      Backfill    Prune old
-       news        companies   price hist  articles
-            │
+       38 sources  companies   price hist  articles
+            │      (54 QSE)   (yfinance)  (>90 days)
             ▼
        [Stage 2]   news_db.py → SQLite (news.db)
             │
@@ -50,18 +60,20 @@ Muraqib is completely separate from the Daleel web chat server (`qse_server.py`)
        [Stage 3]   news_embedder.py → ChromaDB (chroma_db/)
             │
             ▼
-       [Stage 4]   news_analyzer.py → qwen2.5:7b (Ollama)
-            │                         ↑
-            │                   news_price_history.py
-            │                   (yfinance 1-yr history)
+       [Stage 4]   news_analyzer.py
+            │         → entity-tier + source-tier ranking
+            │         → news_price_history.py (1-yr metrics)
+            │         → qwen2.5:7b (Ollama)
             ▼
        [Stage 5]   news_report.py → HTML report → Discord
 
-Separately, on every run:
-       news_pipeline.py → news_db.save_price_snapshot() → price_history table
+Separately — qse_update_soul.py (cron):
+       every 2 min during market hours (09:00–13:30 AST)
+       every 4 hours off-hours
+       → live QSE prices (Playwright) + portfolio + recommendations → SOUL.md
 
-After each pipeline run:
-       qse_update_soul.py (cron) reads recommendations from news.db → writes SOUL.md
+Always-on — qse_server.py:
+       Flask :7400 · qwen2.5:3b · reads SOUL.md
 ```
 
 ---
@@ -70,15 +82,19 @@ After each pipeline run:
 
 | File | Purpose |
 |------|---------|
-| `news_pipeline.py` | **Entry point.** Orchestrates all stages in sequence. Sends Discord crash alert if any stage fails. |
-| `news_scraper.py` | Scrapes all sources in `news_sources.json`. RSS-first, HTML fallback per source. |
+| `news_pipeline.py` | **Muraqib entry point.** Orchestrates all stages. Sends Discord crash alert on failure. |
+| `news_scraper.py` | Scrapes all sources in `news_sources.json`. RSS-first, HTML fallback. Includes `QSE_ALIASES` (Arabic+English aliases for all 54 stocks). |
 | `news_sources.json` | **Source registry.** Add/remove/disable sources here without touching code. |
 | `news_db.py` | SQLite schema + all CRUD. Articles, recommendations, scrape_runs, price_history tables. |
 | `news_embedder.py` | Embeds articles with `multilingual-e5-base` → ChromaDB. Thread-safe singleton. |
-| `news_analyzer.py` | RAG retrieval + entity-tier filtering + LLM call + response parsing. |
+| `news_analyzer.py` | RAG retrieval + entity-tier filtering + source-tier ranking + LLM call + response parsing. |
 | `news_price_history.py` | yfinance backfill (1 year, `.QA` suffix) + per-stock metric computation for LLM prompts. |
 | `news_report.py` | Generates dark-theme HTML report, sends to Discord via Bot Token REST API. |
-| `qse_update_soul.py` | (Daleel component) Writes SOUL.md. Includes `recommendations_section()` which reads Muraqib output. |
+| `qse_scraper.py` | Playwright scraper for live QSE prices (Angular SPA). Also scrapes listed companies page. |
+| `qse_update_soul.py` | **Daleel context writer.** Writes SOUL.md with live prices + portfolio + Muraqib recommendations. |
+| `qse_server.py` | **Daleel web server.** Flask :7400, `qwen2.5:3b`, reads SOUL.md as system prompt. |
+| `qse_chat.py` | CLI for interactive QSE queries (`qse` alias). |
+| `qse_portfolio.py` | Portfolio tracking and price alerts. |
 
 ### Data Paths
 
@@ -88,9 +104,9 @@ After each pipeline run:
 | `~/qse-agent/chroma_db/` | ChromaDB vector store (collection: `qse_news`, cosine similarity) |
 | `~/qse-agent/reports/` | Generated HTML reports (`qse-report-YYYY-MM-DD.html`) |
 | `~/qse-agent/logs/` | Pipeline log files |
-| `~/qse-agent/news_sources.json` | News source configuration registry |
-| `~/qse-agent/.env` | Secrets: `GIST_GITHUB_TOKEN`, `DISCORD_WEBHOOK`, `DISCORD_BOT_TOKEN` |
-| `~/.openclaw/workspace-qatar-stocks/SOUL.md` | Daleel system prompt (includes Muraqib recommendations) |
+| `~/qse-agent/news_sources.json` | News source configuration (38 enabled of 42 total) |
+| `~/qse-agent/.env` | Secrets: `DISCORD_BOT_TOKEN`, `DISCORD_WEBHOOK`, `GIST_GITHUB_TOKEN` |
+| `~/.openclaw/workspace-qatar-stocks/SOUL.md` | Daleel system prompt (live prices + recommendations) |
 
 ---
 
@@ -111,86 +127,66 @@ Qatar market timezone: **AST = UTC+3**
 
 ## News Sources
 
-Sources are configured entirely in `news_sources.json`. **31 sources enabled** across 5 tiers.
+Sources are configured entirely in `news_sources.json`. **38 sources enabled** of 42 total.
 
 | Tier | Focus | Count | Key Sources |
 |------|-------|-------|-------------|
 | 1 | Direct QSE movers | 6 | QSE Official, QNA (EN+AR), QatarEnergy, QCB, MoF Qatar |
-| 2 | Qatar national press | 10 | The Peninsula, Gulf Times, Lusail, Doha News, Al Sharq, Al Raya, Google News (EN+AR), Qatar TV, Al Watan |
+| 2 | Qatar national press | 10 | Peninsula, Gulf Times, Lusail, Doha News, Al Sharq, Al Raya, Qatar TV, Al Watan, Google News (EN+AR) |
 | 3 | GCC / regional | 7 | Al Jazeera (EN+AR), Arab News, Zawya, Asharq Business, MEED, Saudi Gazette |
 | 4 | Global macro | 6 | Reuters (via GNews), Bloomberg, CNBC, FT, Investing.com, OilPrice |
-| 5 | Energy / specialized | 8+ | OPEC, IMF, World Bank, Fed Reserve, Maritime Executive, Hellenic Shipping, MarketWatch, Yahoo Finance, BBC World |
+| 5 | Energy / specialized | 9 | OPEC, IMF, World Bank, Fed Reserve, Maritime Executive, Hellenic Shipping, MarketWatch, Yahoo Finance, BBC World |
 
 **Disabled** (require action to enable):
-- `tradingeconomics` — needs API key in `.env` as `TRADING_ECONOMICS_KEY`
-- `nytimes_world` — paywall, `fetch_body` must stay false
+- `tradingeconomics` — needs `TRADING_ECONOMICS_KEY` in `.env`
+- `nytimes_world` — paywall; `fetch_body` must stay false
 - `techcrunch` / `theverge` — low QSE relevance
-
-### To add a source
-
-1. Append an entry to `news_sources.json` (see ARCHITECTURE.md for schema)
-2. Run `python3 news_scraper.py` to verify
-3. Next pipeline run picks it up automatically — no code changes needed
 
 ---
 
 ## RAG Pipeline — How It Works
 
 ### Stage 1a — Scraping
-- RSS-first per source; falls back to HTML scraping if RSS yields 0 articles
+- RSS-first per source; HTML fallback if RSS yields 0 articles
 - Per-article: language detection (Arabic Unicode ratio), category classification (keyword match), entity extraction (QSE ticker symbols + company aliases from `QSE_ALIASES`)
 - Deduplication: `url_hash` (SHA-256[:16] of URL) + `content_hash` (SHA-256[:16] of title+body)
+- Arabic alias injection: `update_aliases_from_listed_companies()` merges Arabic names from official QSE page into `QSE_ALIASES` at runtime
 
 ### Stage 1b — Listed Companies
-- Fetches the official QSE listed-companies page via Playwright on every run
-- Extracts the **54 currently listed companies** as the canonical symbol list (no ETFs)
-- Uses this list as the target for stages 1c and 4
+- Fetches official QSE listed-companies page via Playwright on every run
+- Extracts the **54 currently listed companies** (no ETFs) as the canonical symbol list
+- Heuristic sector detector handles page layout changes where sector headings are not in the known `_SECTOR_MAP`
 
 ### Stage 1c — Price History Backfill
-- Calls `yfinance` in batch for all 54 symbols with `.QA` suffix (e.g. `QNBK.QA`)
-- Uses `INSERT OR IGNORE` — safe to run repeatedly; only fills missing dates
-- Fills up to 1 year of history on first run; incremental on subsequent runs
+- `yfinance.download()` with `.QA` suffix in batch for all 54 symbols
+- `INSERT OR IGNORE` — safe to run repeatedly; only fills missing dates
+- First run fills ~250 trading days; incremental on subsequent runs
+
+**Dual-writer note:** `qse_update_soul.py` also writes to `price_history` via `save_price_snapshot()` using `INSERT OR REPLACE`, so the last scrape of the day (market close) overwrites earlier snapshots. yfinance historical data is never overwritten by live snapshots.
 
 ### Stage 1d — Retention Cleanup
-- Deletes articles older than 90 days from SQLite
-- Deletes corresponding embeddings from ChromaDB by article ID
-
-### Stage 2 — Database
-- SQLite WAL mode (safe for concurrent reads)
-- One recommendation per stock per day (DELETE + INSERT pattern)
+- Deletes articles older than 90 days from SQLite + corresponding ChromaDB embeddings
 
 ### Stage 3 — Embedding
 - Model: `intfloat/multilingual-e5-base` (278M params, 768-dim, 512-token context)
-- Prefix: `"passage: "` for indexed documents; `"query: "` for retrieval queries
+- Prefix: `"passage: "` for indexed docs; `"query: "` for retrieval queries
 - Device: **CPU** (Ollama owns the GPU for LLM inference)
-- Thread-safe singleton loading (double-checked locking)
-- Only `embedded = 0` articles are processed each run (incremental)
 
 ### Stage 4 — Analysis
-- For each stock, ChromaDB semantic search (top 12 results) + Arabic alias search
-- **Entity-tier filtering:**
-  - Tier 1: articles explicitly tagged to this symbol → always included
-  - Tier 2: articles with no entity tags (general market news) → included as filler
-  - Tier 3: articles tagged to a *different* company → **discarded entirely** (prevents cross-company contamination)
-- Top 6 articles sent to LLM along with:
-  - Live price data (from QSE scraper)
-  - 10-day price history table
-  - 1-year price metrics: 52-week high/low + position%, change over 10/30/90/365 days, MA10 vs MA30 momentum label, average volume
-- LLM: `qwen2.5:7b` via Ollama, JSON mode enforced, temperature 0.1
-- Parallel: `ThreadPoolExecutor(max_workers=2)` — overlaps RAG retrieval with LLM inference
+For each of the 54 stocks:
+1. ChromaDB semantic search (top 12 results) + Arabic alias search
+2. **Entity-tier filtering:**
+   - Tier 1 (symbol explicitly tagged): always kept
+   - Tier 2 (no entity tags — general market news): kept as filler
+   - Tier 3 (tagged to a *different* company): **discarded entirely** — prevents cross-company contamination (e.g. QGMD article in MEZA analysis)
+3. **Source-tier ranking:** within each entity tier, articles sorted by source tier ASC (Tier 1=best). Tier 4–5 articles capped at 2 of 6 slots.
+4. Top 6 articles sent to LLM with: live prices, 10-day price history, 1-year price metrics
+5. `qwen2.5:7b` via Ollama, JSON mode enforced, temperature 0.1
+6. Parallel: `ThreadPoolExecutor(max_workers=2)` — overlaps RAG with LLM inference
 
 ### Stage 5 — Report
-- Dark-theme HTML: BUY (green) / SELL (red) / HOLD (amber) sections
-- Saved to `reports/qse-report-YYYY-MM-DD.html`
-- Delivered to Discord via Bot Token REST API (multipart/form-data, file attachment)
-- Plain-text digest in the message body, full report as downloadable HTML
-
-### Recommendations → SOUL.md
-- `qse_update_soul.py` calls `recommendations_section()` on every SOUL.md update
-- It reads today's recommendations (or most recent if today has none) from `news.db`
-- Formats BUY table (sym|company|sentiment|direction|prediction%|justification), SELL table, HOLD list
-- Injects the section into SOUL.md between portfolio and live market data
-- This is how the Daleel agent can answer questions like "what are today's buy signals?"
+- Dark-theme HTML saved to `reports/qse-report-YYYY-MM-DD.html`
+- Delivered to Discord via Bot Token REST API (file attachment)
 
 ---
 
@@ -198,15 +194,18 @@ Sources are configured entirely in `news_sources.json`. **31 sources enabled** a
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| Scraping | `requests` + `feedparser` + `BeautifulSoup/lxml` | RSS-first; HTML fallback for JS-light sites |
+| Scraping | `requests` + `feedparser` + `BeautifulSoup/lxml` | RSS-first; HTML fallback |
 | QSE price scraping | `playwright` (Chromium at `~/.openclaw/browsers/`) | Angular SPA; 7s render wait |
 | Price history | `yfinance` | `.QA` ticker suffix; 1-year backfill |
 | Embeddings | `sentence-transformers` (`multilingual-e5-base`) | 512-token, 768-dim, CPU, Arabic+English |
 | Vector store | `ChromaDB` (persistent local) | `~/qse-agent/chroma_db/`, cosine similarity |
 | Relational DB | `SQLite` WAL | `~/qse-agent/news.db` |
-| LLM inference | `qwen2.5:7b` via Ollama `:11434` | JSON mode, 8192 ctx, temperature 0.1 |
+| LLM (Muraqib) | `qwen2.5:7b` via Ollama `:11434` | JSON mode, 8192 ctx, temperature 0.1 |
+| LLM (Daleel) | `qwen2.5:3b` via Ollama `:11434` | Fits fully in 5 GB VRAM |
 | Notifications | Discord REST API v10 (Bot Token) | Channel ID: `1503771223358832710` |
-| Scheduling | `cron` | See schedule above |
+| Crash alerts | Discord Webhook | Uses `DISCORD_WEBHOOK` from `.env` |
+| Web interface | Flask `:7400` + Cloudflare tunnel | Daleel public access |
+| Scheduling | `cron` | JST timezone |
 | Log rotation | `logrotate` | Weekly, 12-week retention |
 
 ---
@@ -214,11 +213,10 @@ Sources are configured entirely in `news_sources.json`. **31 sources enabled** a
 ## GPU Notes
 
 - **Quadro P2000** — 5 GB VRAM, Pascal arch (sm_61)
-- `qwen2.5:3b` (Daleel web chat) fits fully in VRAM → ~4s responses
-- `qwen2.5:7b` (Muraqib) partially offloads to CPU RAM → ~33–39s per stock
-- Muraqib forces embedder to **CPU** (`device="cpu"`) so Ollama has exclusive GPU access
-- When Muraqib is running `qwen2.5:7b`, Daleel's web chat returns a busy notice (detected via Ollama `/api/ps`)
-- **CUDA warning:** Modern PyTorch builds may fail on sm_61 with "no kernel image". Ollama's llama.cpp backend works fine.
+- `qwen2.5:3b` (Daleel) fits fully in VRAM → ~4s responses
+- `qwen2.5:7b` (Muraqib) partially offloads to CPU RAM → ~33–39s per stock; full run ~30–75 min
+- Muraqib forces embedder to **CPU** so Ollama has exclusive GPU access during analysis
+- When Muraqib is running, Daleel's chat returns a busy notice (detected via Ollama `/api/ps`)
 
 ---
 
@@ -227,13 +225,14 @@ Sources are configured entirely in `news_sources.json`. **31 sources enabled** a
 | Failure | Effect | Mitigation |
 |---------|--------|-----------|
 | RSS feed down | 0 articles from that source | HTML fallback activates automatically |
-| Ollama not running | Analysis stage skipped | Pre-flight check on startup; Discord alert sent |
+| Ollama not running | Analysis stage skipped | Pre-flight check; Discord alert sent |
 | Ollama timeout per stock | That stock skipped | 120s timeout; pipeline continues |
 | ChromaDB write fail | Articles stay `embedded=0` | Retried next run (idempotent upsert) |
 | Discord API error | No notification | Report saved locally; error logged |
-| QSE scraper fails | No live prices | Analyzer logs warning; skips all stocks gracefully |
+| QSE scraper fails | No live prices in prompts | Analyzer logs warning; uses historical metrics only |
 | Full pipeline crash | Nothing delivered | Top-level try/except sends crash traceback to Discord |
-| yfinance failure | No history backfill | Non-fatal; analysis proceeds with whatever history is stored |
+| yfinance failure | No new history rows | Non-fatal; analysis uses existing history |
+| Muraqib hangs | Silent stall (no crash alert) | See `WATCHDOG_PROPOSAL.md` for heartbeat + watchdog |
 
 ---
 
@@ -248,19 +247,29 @@ sqlite3 ~/qse-agent/news.db "SELECT count(*) FROM articles;"
 
 # Today's recommendations summary
 sqlite3 ~/qse-agent/news.db \
-  "SELECT stock_symbol, recommendation, sentiment_score FROM recommendations WHERE run_date=date('now') ORDER BY recommendation;"
+  "SELECT stock_symbol, recommendation, sentiment_score FROM recommendations \
+   WHERE run_date=date('now') ORDER BY recommendation, sentiment_score DESC;"
 
 # Last scrape run stats
 sqlite3 ~/qse-agent/news.db \
-  "SELECT started_at, total_articles, new_articles, errors FROM scrape_runs ORDER BY id DESC LIMIT 1;"
+  "SELECT started_at, completed_at, total_articles, new_articles FROM scrape_runs \
+   ORDER BY id DESC LIMIT 1;"
 
-# Is Ollama running and models available?
-curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; print([m['name'] for m in json.load(sys.stdin)['models']])"
+# Is Ollama running and which models are loaded?
+curl -s http://localhost:11434/api/tags | python3 -c \
+  "import sys,json; print([m['name'] for m in json.load(sys.stdin)['models']])"
 
 # GPU state
 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.free --format=csv,noheader
 
-# Run the full pipeline manually
+# Is Daleel responding?
+curl -s http://localhost:7400/health || echo "Daleel not responding"
+
+# How stale is SOUL.md?
+python3 -c "import os,time; st=os.stat('$HOME/.openclaw/workspace-qatar-stocks/SOUL.md'); \
+  print(f'SOUL.md last updated {(time.time()-st.st_mtime)/60:.1f} min ago')"
+
+# Run the full Muraqib pipeline manually
 python3 ~/qse-agent/news_pipeline.py
 
 # Run analysis for specific stocks only (faster for testing)
@@ -275,17 +284,61 @@ python3 ~/qse-agent/news_scraper.py
 
 ---
 
+## How to Start / Stop Each System
+
+### Muraqib
+```bash
+# Manual run (foreground — see all output)
+python3 ~/qse-agent/news_pipeline.py
+
+# Cron is already configured — runs automatically per schedule
+# To check cron status:
+crontab -l
+```
+
+### Daleel web server
+```bash
+# Check if running
+systemctl status daleel   # or: pgrep -a -f qse_server.py
+
+# Restart
+sudo systemctl restart daleel   # if configured as systemd service
+# OR:
+pkill -f qse_server.py && python3 ~/qse-agent/qse_server.py &
+
+# Check Cloudflare tunnel
+systemctl status cloudflared
+```
+
+### SOUL.md updater
+```bash
+# Manual update
+python3 ~/qse-agent/qse_update_soul.py
+
+# Runs automatically via cron — see schedule above
+```
+
+---
+
 ## Known Issues (as of 2026-05-17)
 
-| Issue | Detail | Resolution path |
-|-------|--------|----------------|
-| QNA RSS 404 | `qna.org.qa` changed its RSS URL structure | Visit `qna.org.qa/en/RSS-Feeds` to find current paths; update `news_sources.json` |
-| Al Jazeera Arabic DNS failure | `arabic.aljazeera.net` may be geo-blocked from this machine | Test with `curl -v`; consider DNS override or VPN |
-| Qatar TV / Al Watan low yield | RSS URLs unverified; HTML fallback gets headline-only | Manually inspect live pages to find working RSS URLs |
-| QatarEnergy / QCB / MoF HTML-only | No RSS feeds; SharePoint portals | CSS selectors may need tuning as portal templates change |
-| `QSE_ALIASES` coverage | Keyword-based entity extraction; not all 54 companies have Arabic aliases mapped | Expand `QSE_ALIASES` in `news_scraper.py` |
-| No sector-level analysis | Each stock analysed in isolation | Future: group by QSE sector before RAG retrieval |
-| No backtesting | Recommendations not validated against actual price moves | Future: compare `price_prediction_pct` against next-day actual change |
+| Issue | Severity | Detail | Resolution path |
+|-------|----------|--------|----------------|
+| QNA RSS 404 | Medium | `qna.org.qa` changed its RSS URL structure | Visit `qna.org.qa/en/RSS-Feeds`; update `news_sources.json` |
+| Al Jazeera Arabic DNS failure | Low | `arabic.aljazeera.net` may be geo-blocked | Test with `curl -v`; consider DNS override |
+| Qatar TV / Al Watan low yield | Low | RSS URLs unverified; HTML fallback gets headlines only | Manually inspect live pages for working feed paths |
+| yfinance no timeout | Medium | `yf.download()` blocks indefinitely on network failure; can hang Stage 1c | Wrap in `concurrent.futures` with timeout; see `WATCHDOG_PROPOSAL.md` |
+| Discord crash alert uses wrong credential | Medium | `send_discord_alert()` uses `DISCORD_BOT_TOKEN` but `.env` only sets `DISCORD_WEBHOOK` | Switch alert function to use webhook URL (simple POST, no auth header needed) |
+| No hang detection for Muraqib | Medium | If pipeline hangs inside yfinance, ChromaDB, or Playwright, no alert is sent | Implement heartbeat + watchdog per `WATCHDOG_PROPOSAL.md` |
+| No sector-level analysis | Low | Each stock analysed in isolation | Future: group by QSE sector for broader macro context |
+| No backtesting | Low | Recommendations not validated against actual price moves | Future: compare `price_prediction_pct` against next-day actual change |
+
+**Items resolved this session (2026-05-17):**
+- ~~Cross-company contamination (e.g. QGMD news in MEZA analysis)~~ — Fixed: Tier 3 articles discarded entirely
+- ~~Entity extraction false positives (GIS matching GISS)~~ — Fixed: word-boundary requirement for short abbreviations
+- ~~Price snapshot storing opening price not closing~~ — Fixed: `INSERT OR REPLACE` in `save_price_snapshot()`
+- ~~Source-tier ranking decorative only~~ — Fixed: articles now sorted by source tier within entity tiers; Tier 4–5 capped
+- ~~QSE_ALIASES incomplete for Arabic aliases~~ — Fixed: all 54 stocks now have Arabic names in `QSE_ALIASES`; runtime injection from official listed-companies page
 
 ---
 
@@ -293,25 +346,28 @@ python3 ~/qse-agent/news_scraper.py
 
 | Date | Decision | Reason |
 |------|----------|--------|
-| 2026-05-15 | Abandoned OpenClaw framework for QSE data | LLM forced to fetch browser data → 120s Gemini timeout; hallucinations with 3B models |
+| 2026-05-15 | Abandoned OpenClaw framework | LLM forced to fetch browser data → 120s Gemini timeout; hallucinations with 3B models |
 | 2026-05-15 | Built standalone Playwright scraper + Ollama pipeline | Separating scraping and inference eliminates timeouts and hallucinations |
 | 2026-05-16 | Built Muraqib news RAG pipeline | Add market intelligence beyond live price data |
-| 2026-05-16 | Switched embedder from MiniLM to multilingual-e5-base | MiniLM had 128-token limit; silently truncated article bodies beyond first ~100 words |
-| 2026-05-17 | Added 1-year price history via yfinance | Gives LLM 52-week context, MA10/MA30 signals — improved BUY detection from 5 → 21 stocks |
-| 2026-05-17 | Entity-tier RAG filtering | Prevented cross-company contamination (e.g. QGMD article appearing in MEZA analysis) |
-| 2026-05-17 | Scrape official QSE listed-companies page for symbol list | Removed ETFs and phantom symbols; canonical count is 54 not 56 |
-| 2026-05-17 | One recommendation per stock per day (DELETE+INSERT) | Pipeline could run multiple times per day, creating duplicate rows |
-| 2026-05-17 | Injected recommendations into SOUL.md | Enables Daleel conversational agent to answer BUY/SELL/HOLD queries |
-| 2026-05-17 | Named the system Muraqib (مراقب) | "Observer/watcher" — reflects the system's role in the Daleel ecosystem |
+| 2026-05-16 | Switched embedder to multilingual-e5-base | MiniLM had 128-token limit; silently truncated article bodies |
+| 2026-05-17 | Added 1-year price history via yfinance | Gives LLM 52-week context and MA10/MA30 signals |
+| 2026-05-17 | Entity-tier RAG filtering | Prevented cross-company contamination |
+| 2026-05-17 | Source-tier-aware article ranking | Qatar-specific sources ranked above global macro within entity tiers |
+| 2026-05-17 | Scrape official QSE listed-companies page | Canonical count is 54 (removed ETFs and phantom symbols) |
+| 2026-05-17 | One recommendation per stock per day (DELETE+INSERT) | Pipeline runs multiple times per day; prevents duplicate rows |
+| 2026-05-17 | Live price snapshot uses INSERT OR REPLACE | Last-of-day scrape gives closing price, not opening price |
+| 2026-05-17 | Injected recommendations into SOUL.md | Enables Daleel to answer BUY/SELL/HOLD queries |
+| 2026-05-17 | Named the system Muraqib (مراقب) | "Observer/watcher" — reflects the system's monitoring role |
 
 ---
 
 ## Suggested Next Steps
 
 1. **Fix QNA RSS** — visit `qna.org.qa/en/RSS-Feeds`, update paths in `news_sources.json`
-2. **Expand `QSE_ALIASES`** — add Arabic company names for all 54 stocks to improve Arabic article entity tagging
-3. **Add `/reports` route** in `qse_server.py` — serve HTML reports through the Daleel web UI
-4. **Sector-level analysis** — group stocks by QSE sector before RAG retrieval for broader macro context
-5. **Backtesting** — compare `price_prediction_pct` against actual next-day price change to calibrate the model
-6. **Prune unused Ollama models** — `llama3.1`, `llama3.1-fast`, `llama3.2-fast`, `llama3`, `gemma2`, `gemma3:4b` total ~22 GB unused disk
-7. **Arabic NLP** — consider `CAMeL-Tools` for proper Arabic entity extraction instead of keyword matching
+2. **Fix Discord crash alert** — change `send_discord_alert()` to use `DISCORD_WEBHOOK` env var (simple POST, no Bot Token needed)
+3. **Implement watchdog + heartbeat** — see `WATCHDOG_PROPOSAL.md` for the full spec; prevents silent hangs going undetected
+4. **Add yfinance timeout** — wrap `yf.download()` in a `ThreadPoolExecutor` with a 120s timeout to match the Ollama timeout
+5. **Add `/reports` route** in `qse_server.py` — serve HTML reports through the Daleel web UI
+6. **Sector-level analysis** — group stocks by QSE sector before RAG retrieval for broader macro context
+7. **Backtesting** — compare `price_prediction_pct` against actual next-day price change to calibrate the model
+8. **Prune unused Ollama models** — `llama3.1`, `llama3.1-fast`, `llama3.2-fast`, `llama3`, `gemma2`, `gemma3:4b` total ~22 GB unused disk
