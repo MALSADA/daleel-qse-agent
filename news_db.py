@@ -229,11 +229,12 @@ def delete_old_articles(days: int = 90) -> list[int]:
 
 
 def save_price_snapshot(stocks: list[dict]):
-    """Save today's closing prices. Safe to call multiple times — UNIQUE(symbol, date) prevents duplicates."""
+    """Save today's prices. Each call overwrites the previous snapshot for today so the
+    last scrape of the day (market close) wins rather than the first (market open)."""
     today = datetime.now().strftime("%Y-%m-%d")
     with get_conn() as conn:
         conn.executemany(
-            """INSERT OR IGNORE INTO price_history
+            """INSERT OR REPLACE INTO price_history
                (symbol, date, close_price, change_pct, volume, trades)
                VALUES (?,?,?,?,?,?)""",
             [
