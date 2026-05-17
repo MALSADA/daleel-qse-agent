@@ -1,27 +1,27 @@
-# Daleel — QSE Information Gathering & Analysis System
+# Muraqib (مراقب) — QSE Gathering and Analysis System
 
-A fully local, offline-capable pipeline that scrapes Qatari and regional news nightly, stores it in a RAG (Retrieval-Augmented Generation) database, and produces daily BUY / SELL / HOLD recommendations for every Qatar Stock Exchange (QSE) listed stock, delivered as an HTML report and Discord notification.
+**Muraqib** (Arabic: مراقب — "observer / watcher") is the intelligence sub-system of the Daleel QSE platform. It scrapes Arabic and English news from 31 sources, embeds them into a vector database, and produces daily BUY / SELL / HOLD recommendations for every Qatar Stock Exchange (QSE) listed stock — delivered as an HTML report and Discord notification.
 
-**No cloud API keys required.** Everything runs on your local machine using Ollama.
+**No cloud API keys required.** Everything runs locally using Ollama.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Run the full nightly pipeline right now
+# Run the full pipeline right now
 python3 ~/qse-agent/news_pipeline.py
 
 # Scrape and embed only (no LLM analysis)
 python3 ~/qse-agent/news_pipeline.py --scrape-only
 
-# Analyze specific stocks only
+# Analyze specific stocks only (faster for testing)
 python3 ~/qse-agent/news_pipeline.py --symbols QNBK ORDS MARK
 
-# Regenerate today's report from already-saved recommendations
+# Regenerate today's report from saved recommendations
 python3 ~/qse-agent/news_pipeline.py --report-only
 
-# Interactive QSE price chat
+# Interactive QSE price chat (Daleel)
 qse
 ```
 
@@ -30,52 +30,50 @@ qse
 ## System Overview
 
 ```
-NIGHTLY SCHEDULER (cron @ 23:00 AST)
-          │
-          ▼
-  ┌─────────────────────────────────────────────────┐
-  │             NEWS SCRAPER LAYER                  │
-  │  QNA · Al Jazeera (EN+AR) · Qatar TV · Alwatan │
-  │  Strategy: RSS first, HTML fallback             │
-  └──────────────────┬──────────────────────────────┘
-                     │ raw articles
-                     ▼
-  ┌─────────────────────────────────────────────────┐
-  │           PROCESSING PIPELINE                   │
-  │  dedup · lang detect · category tag · entities  │
-  └──────┬──────────────────────────────┬───────────┘
-         │                              │
-         ▼                              ▼
-  ┌─────────────────┐      ┌────────────────────────┐
-  │  ChromaDB       │      │  SQLite (news.db)       │
-  │  Vector Store   │      │  Article metadata       │
-  │  (embeddings)   │      │  Recommendations        │
-  └────────┬────────┘      └────────────────────────┘
-           │
-           ▼
-  ┌─────────────────────────────────────────────────┐
-  │           RAG ANALYSIS ENGINE                   │
-  │  Per stock: semantic search → news context      │
-  │  + live QSE price data → qwen2.5:7b → rec.     │
-  └──────────────────┬──────────────────────────────┘
-                     │
-                     ▼
-  ┌─────────────────────────────────────────────────┐
-  │             OUTPUT LAYER                        │
-  │  HTML report (reports/) · Discord attachment    │
-  └─────────────────────────────────────────────────┘
+  cron (08:45 AST pre-market · 14:00 AST post-market)
+            │
+            ▼
+  ┌──────────────────────────────────────────────────┐
+  │              news_pipeline.py                    │
+  │  Stage 1a: Scrape 31 sources (RSS + HTML)        │
+  │  Stage 1b: Fetch official QSE listed companies   │
+  │  Stage 1c: Backfill 1-year price history         │
+  │  Stage 1d: Prune articles older than 90 days     │
+  └──────────┬───────────────────────────────────────┘
+             │
+   ┌─────────▼──────────┐    ┌──────────────────────┐
+   │ ChromaDB           │    │ SQLite (news.db)      │
+   │ Vector embeddings  │    │ Articles · Recs       │
+   │ (multilingual-e5)  │    │ Price history         │
+   └─────────┬──────────┘    └──────────────────────┘
+             │ RAG retrieval + entity-tier filtering
+             ▼
+  ┌──────────────────────────────────────────────────┐
+  │         news_analyzer.py (RAG engine)            │
+  │  Per stock: semantic search → entity filtering   │
+  │  → 1-yr price metrics → qwen2.5:7b → BUY/SELL   │
+  └──────────┬───────────────────────────────────────┘
+             │
+             ▼
+  ┌──────────────────────────────────────────────────┐
+  │  HTML report (reports/) · Discord attachment     │
+  │  + injected into SOUL.md for Daleel agent        │
+  └──────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## News Sources
 
-| Source | Language | Method | Coverage |
-|--------|----------|--------|----------|
-| QNA (Qatar News Agency) | AR + EN | RSS (4 feeds) + HTML fallback | Qatar official news, economy |
-| Al Jazeera | AR + EN | RSS (`all.xml` + `economy.xml`) | Regional + international |
-| Qatar TV (QTV) | AR + EN | RSS + HTML fallback | Local Qatar news |
-| Al Watan newspaper | AR | RSS + HTML fallback | Qatar Arabic press |
+**31 sources enabled** across 5 tiers. Configured in `news_sources.json` — no code changes needed to add, remove, or disable a source.
+
+| Tier | Focus | Examples |
+|------|-------|---------|
+| 1 | Direct QSE movers | QSE Official, QNA (EN+AR), QatarEnergy, Qatar Central Bank, Ministry of Finance |
+| 2 | Qatar national press | The Peninsula, Gulf Times, Lusail, Doha News, Al Sharq, Al Raya, Google News (EN+AR), Qatar TV, Al Watan |
+| 3 | GCC / regional | Al Jazeera (EN+AR), Arab News, Zawya, Asharq Business (Bloomberg), MEED, Saudi Gazette |
+| 4 | Global macro | Reuters, Bloomberg, CNBC, FT, Investing.com, OilPrice |
+| 5 | Energy / specialized | OPEC, IMF, World Bank, Federal Reserve, Maritime Executive, Hellenic Shipping, MarketWatch, Yahoo Finance, BBC World |
 
 ---
 
@@ -83,135 +81,122 @@ NIGHTLY SCHEDULER (cron @ 23:00 AST)
 
 ```
 qse-agent/
-├── news_pipeline.py    Main orchestrator — run this nightly
-├── news_scraper.py     Source-specific scrapers (RSS + HTML)
-├── news_db.py          SQLite schema and CRUD operations
-├── news_embedder.py    Multilingual embedding + ChromaDB store
-├── news_analyzer.py    RAG retrieval + LLM recommendation engine
-├── news_report.py      HTML report generator + Discord sender
+├── news_pipeline.py      Main orchestrator — run this
+├── news_scraper.py       Config-driven scraper (RSS + HTML fallback)
+├── news_sources.json     Source registry — add/disable sources here
+├── news_db.py            SQLite schema and CRUD
+├── news_embedder.py      multilingual-e5-base → ChromaDB (CPU, thread-safe)
+├── news_analyzer.py      RAG retrieval + entity filtering + LLM recommendation
+├── news_price_history.py yfinance backfill + 1-year metric computation
+├── news_report.py        HTML report + Discord delivery
 │
-├── qse_scraper.py      Live QSE stock price scraper (Playwright)
-├── qse_chat.py         Interactive CLI for QSE data queries
-├── qse_portfolio.py    Portfolio tracking and price alert logic
-├── qse_update_soul.py  Market-hours background updater
+├── qse_scraper.py        Live QSE price scraper (Playwright/Angular SPA)
+├── qse_update_soul.py    Writes SOUL.md (includes Muraqib recommendations)
+├── qse_chat.py           CLI for interactive QSE queries
+├── qse_portfolio.py      Portfolio tracking and price alerts
+├── qse_server.py         Daleel web chat server (Flask :7400)
 │
-├── news.db             SQLite database (articles + recommendations)
-├── chroma_db/          ChromaDB persistent vector store
-├── reports/            Generated HTML reports (one per day)
-├── logs/               Pipeline run logs
+├── news.db               SQLite database
+├── chroma_db/            ChromaDB persistent vector store
+├── reports/              Generated HTML reports (one per day)
+├── logs/                 Pipeline logs
 │
-├── .env                Secrets (DISCORD_BOT_TOKEN) — never commit
-├── requirements.txt    Python dependencies
-└── README.md           This file
+├── ARCHITECTURE.md       Full architecture with component detail
+├── HANDOVER.md           Agent handover document
+├── .env                  Secrets (DISCORD_BOT_TOKEN, etc.) — never commit
+└── requirements.txt      Python dependencies
 ```
 
 ---
 
 ## Dependencies
 
-Install with:
 ```bash
 pip install -r requirements.txt
 ```
-
-Key packages:
 
 | Package | Purpose |
 |---------|---------|
 | `feedparser` | RSS feed parsing |
 | `beautifulsoup4` + `lxml` | HTML scraping fallback |
-| `sentence-transformers` | Multilingual text embeddings |
+| `sentence-transformers` | Multilingual embeddings (multilingual-e5-base) |
 | `chromadb` | Local vector database |
 | `requests` | HTTP + Discord API calls |
-| `playwright` | QSE Angular SPA scraper |
+| `playwright` | QSE Angular SPA scraping |
+| `yfinance` | 1-year historical price backfill |
 
-**LLM:** `qwen2.5:7b` via Ollama (must be running locally)
+**LLM:** `qwen2.5:7b` via Ollama (must be running on `:11434`)
 
 ---
 
 ## Configuration
 
-All secrets live in `.env` in the project root:
-
+Secrets in `.env`:
 ```bash
-DISCORD_BOT_TOKEN=your_bot_token_here
+DISCORD_BOT_TOKEN=your_bot_token
+DISCORD_WEBHOOK=your_webhook_url
+GIST_GITHUB_TOKEN=your_gist_token   # for Daleel URL distribution
 ```
 
-Hardcoded constants you may want to adjust:
+Key constants:
 
 | File | Constant | Default | Description |
 |------|----------|---------|-------------|
 | `news_report.py` | `DISCORD_CHANNEL_ID` | `1503771223358832710` | Discord channel for reports |
 | `news_analyzer.py` | `MODEL` | `qwen2.5:7b` | Ollama model for analysis |
 | `news_analyzer.py` | `MAX_CONTEXT_ARTICLES` | `6` | News articles per stock in prompt |
-| `news_embedder.py` | `MODEL_NAME` | `paraphrase-multilingual-MiniLM-L12-v2` | Embedding model |
-| `news_scraper.py` | `REQUEST_DELAY` | `1.5` | Seconds between requests |
+| `news_analyzer.py` | `RAG_RESULTS` | `12` | ChromaDB candidates before entity filtering |
 
 ---
 
 ## Cron Schedule
 
+System timezone is **Asia/Tokyo (JST = UTC+9)**. Qatar market is **AST = UTC+3**.
+
 ```
-0 20 * * *  python3 /home/sadashi/qse-agent/news_pipeline.py >> logs/pipeline.log 2>&1
+45  14  * * 0-4   news_pipeline.py   # 08:45 AST pre-market, Sun–Thu
+0   20  * * *     news_pipeline.py   # 14:00 AST post-market, daily
+*/2 15-19 * * 0-4 qse_update_soul.py # Every 2 min during market hours
+0   */4 * * *     qse_update_soul.py # Every 4 hours off-hours
 ```
-Runs at **20:00 UTC = 23:00 AST** every night. Logs go to `logs/pipeline.log`.
 
 ---
 
-## Output: Recommendations
+## Output
 
-Each stock gets one of three recommendations:
+Each of the 54 listed QSE stocks receives one of:
 
 | Signal | Meaning |
 |--------|---------|
-| **BUY** | Positive news sentiment, price expected to rise |
-| **SELL** | Negative news context, price expected to fall |
-| **HOLD** | Insufficient signal or mixed news |
+| **BUY** | Positive news sentiment + bullish price momentum |
+| **SELL** | Negative news context + bearish price trend |
+| **HOLD** | Insufficient signal or mixed evidence |
 
 Each recommendation includes:
-- Sentiment score (−5 to +5)
-- Price direction (UP / DOWN / NEUTRAL) with % estimate
-- Justification paragraph citing specific news headlines
+- Sentiment score (−5.0 to +5.0)
+- Price direction (UP / DOWN / NEUTRAL) with % prediction
+- Justification paragraph citing specific news and price evidence
 
----
-
-## Database Schema
-
-**articles** — every scraped news item
-```
-id, url, url_hash, content_hash, title, body,
-source, published_at, scraped_at, language,
-category, entities (JSON), embedded (0/1)
-```
-
-**recommendations** — daily LLM outputs
-```
-id, created_at, stock_symbol, stock_name,
-recommendation, sentiment_score, price_direction,
-price_prediction_pct, justification,
-cited_article_ids (JSON), run_date
-```
-
-**scrape_runs** — audit trail
-```
-id, started_at, completed_at,
-total_articles, new_articles, errors (JSON)
-```
+Recommendations are delivered to:
+1. **Discord** — HTML report attachment + text digest
+2. **SOUL.md** — so the Daleel conversational agent can answer queries
 
 ---
 
 ## Extending the System
 
-**Add a new news source:** Add a `scrape_<source>()` function to `news_scraper.py` following the existing pattern, then register it in the `scrape_all()` list.
+**Add a news source:** Append an entry to `news_sources.json`, run `python3 news_scraper.py` to verify, done.
 
-**Change the LLM model:** Update `MODEL` in `news_analyzer.py`. Any Ollama model with 7B+ parameters works. Models below 7B tend to not reliably follow the structured output format.
+**Change the LLM model:** Update `MODEL` in `news_analyzer.py`. Models below 7B may not reliably produce valid JSON output.
 
-**Add more QSE company aliases:** Edit `QSE_ALIASES` in `news_scraper.py`. This improves entity extraction and RAG retrieval accuracy for specific stocks.
+**Add company aliases:** Edit `QSE_ALIASES` in `news_scraper.py` to improve entity extraction and RAG accuracy for specific stocks.
 
-**Tune recommendation quality:** Edit `SYSTEM_PROMPT` in `news_analyzer.py`. Adding sector context or historical price trend data significantly improves accuracy.
+**Tune recommendations:** Edit `SYSTEM_PROMPT` in `news_analyzer.py`. The prompt already weights news sentiment + price momentum; adding sector context improves sector-level calls.
+
+See `ARCHITECTURE.md` for full component detail, `HANDOVER.md` for operational runbook.
 
 ---
 
 ## Disclaimer
 
-This system is for informational and research purposes only. It does not constitute financial advice. Always conduct your own due diligence before making investment decisions.
+For informational and research purposes only. Not financial advice. Always conduct your own due diligence before making investment decisions.
