@@ -9,8 +9,8 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional
-
 
 import requests
 
@@ -23,6 +23,35 @@ OLLAMA_URL = "http://localhost:11434"
 MODEL = "qwen2.5:7b"
 MAX_CONTEXT_ARTICLES = 6
 RAG_RESULTS = 12
+MAX_LOW_RELEVANCE_ARTICLES = 2  # max tier 4-5 (global macro) articles per stock
+
+
+# ---------------------------------------------------------------------------
+# Source-tier lookup — built once from news_sources.json at import time
+# ---------------------------------------------------------------------------
+
+def _build_source_tier_map() -> dict[str, int]:
+    """Load {source_id: tier} from news_sources.json. Falls back to tier 3 for unknowns."""
+    try:
+        data = json.loads((Path(__file__).parent / "news_sources.json").read_text())
+        return {s["id"]: s.get("tier", 3) for s in data.get("sources", []) if "id" in s}
+    except Exception:
+        return {}
+
+SOURCE_TIER: dict[str, int] = _build_source_tier_map()
+
+_TIER_LABEL = {
+    1: "Official/Direct",
+    2: "Qatar Press",
+    3: "Regional",
+    4: "Global Macro",
+    5: "Specialized",
+}
+
+
+def _source_tier(source_id: str) -> int:
+    """Return the source tier (1–5) for a source ID. Defaults to 3 for unknowns."""
+    return SOURCE_TIER.get(source_id or "", 3)
 
 
 # ---------------------------------------------------------------------------
@@ -117,13 +146,30 @@ def _retrieve_news(symbol: str, name: str) -> list[dict]:
             tier2.append(art)
         # else: tagged to a different company — discard entirely
 
-    ranked = (tier1 + tier2)[:MAX_CONTEXT_ARTICLES]
+    # Within each entity tier, prefer higher-quality sources (lower source tier number).
+    # A QNA tier-1 press release beats a Bloomberg tier-4 macro article even when
+    # their embeddings are similarly close to the query.
+    tier1.sort(key=lambda a: _source_tier(a.get("source", "")))
+    tier2.sort(key=lambda a: _source_tier(a.get("source", "")))
 
-    if not ranked:
+    # Fill up to MAX_CONTEXT_ARTICLES, but cap global macro / specialized sources
+    # (tier 4-5) at MAX_LOW_RELEVANCE_ARTICLES so they never crowd out Qatar coverage.
+    filtered, low_relevance_count = [], 0
+    for art in tier1 + tier2:
+        st = _source_tier(art.get("source", ""))
+        if st >= 4:
+            if low_relevance_count >= MAX_LOW_RELEVANCE_ARTICLES:
+                continue
+            low_relevance_count += 1
+        filtered.append(art)
+        if len(filtered) == MAX_CONTEXT_ARTICLES:
+            break
+
+    if not filtered:
         print(f"[analyzer] {symbol}: no relevant articles (tier1={len(tier1)} tier2={len(tier2)})",
               file=sys.stderr)
 
-    return ranked
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +233,8 @@ Rules:
 - Be conservative and evidence-based. If news is insufficient, use price metrics as the primary signal.
 - If both news and price metrics are neutral/insufficient, return HOLD with sentiment_score 0.0.
 - price_prediction_pct must be a plain number, e.g. 2.5 or -1.2 (no % sign).
-- All string values must use the exact capitalisation shown above."""
+- All string values must use the exact capitalisation shown above.
+- Source tiers in the news context: Tier 1-2 = Qatar official/press (high weight). Tier 3 = regional Arab media (medium). Tier 4-5 = global macro/specialized (low weight unless directly about Qatar)."""
 
 
 def _parse_response(text: str) -> dict:
@@ -264,9 +311,12 @@ def analyze_stock(symbol: str, stock_data: dict) -> Optional[dict]:
     if not articles:
         return None
 
-    # Build news context
+    # Build news context with source tier labels so the LLM knows reliability weight
     news_context = "\n\n".join(
-        f"[{i+1}] {a['source'].upper()} | {(a.get('published_at') or '?')[:10]}\n"
+        f"[{i+1}] {a['source'].upper()} | "
+        f"{_TIER_LABEL.get(_source_tier(a.get('source', '')), 'Unknown')} "
+        f"(Tier {_source_tier(a.get('source', ''))}) | "
+        f"{(a.get('published_at') or '?')[:10]}\n"
         f"Title: {a['title']}\n"
         f"Body: {(a.get('body') or '')[:500]}"
         for i, a in enumerate(articles)
