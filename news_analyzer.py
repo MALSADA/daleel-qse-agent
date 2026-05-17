@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-RAG analysis engine: for each QSE stock, retrieve relevant news then ask
-qwen2.5:7b for a BUY / SELL / HOLD recommendation with justification.
+Muraqib (مراقب) — RAG analysis engine: for each QSE stock, retrieve relevant news
+then ask qwen2.5:7b for a BUY / SELL / HOLD recommendation with justification.
 """
 
 import json

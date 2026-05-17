@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Config-driven news scraper for the Daleel QSE pipeline.
+Muraqib (مراقب) — config-driven news scraper for the QSE Gathering and Analysis System.
 
 Source registry lives in news_sources.json — add, remove, or toggle sources
 there without touching this file. Each source is tried RSS-first, HTML fallback

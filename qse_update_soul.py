@@ -243,7 +243,7 @@ def check_alerts(holdings: dict, price_map: dict):
 def recommendations_section() -> list[str]:
     """
     Read today's (or most recent available) BUY/SELL/HOLD recommendations
-    from the news RAG pipeline and format them for SOUL.md.
+    from the Muraqib RAG pipeline and format them for SOUL.md.
     """
     try:
         import sqlite3
@@ -284,7 +284,7 @@ def recommendations_section() -> list[str]:
         holds = [r for r in rows if r["recommendation"] == "HOLD"]
 
         lines = [f"## Daily Investment Analysis — {date_label}"]
-        lines.append("*Source: Daleel RAG pipeline (news + 1-year price history + LLM). Not financial advice.*")
+        lines.append("*Source: Muraqib (مراقب) — QSE Gathering and Analysis System (news + 1-year price history + LLM). Not financial advice.*")
         lines.append("")
 
         if buys:

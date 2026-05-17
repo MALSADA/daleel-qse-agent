@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate HTML report and send it to Discord as an attached file.
+Muraqib (مراقب) — generate HTML report and send it to Discord as an attached file.
 """
 
 import json
@@ -63,7 +63,7 @@ def generate_html(recommendations: list[dict], scrape_stats: dict) -> Path:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>QSE Daily Analysis — {date_str}</title>
+<title>Muraqib — QSE Daily Analysis — {date_str}</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -87,8 +87,8 @@ def generate_html(recommendations: list[dict], scrape_stats: dict) -> Path:
 </style>
 </head>
 <body>
-<h1>QSE Daily Market Analysis</h1>
-<p class="meta">Generated {generated_at} · Powered by Daleel RAG + qwen2.5:7b</p>
+<h1>Muraqib · QSE Daily Market Analysis</h1>
+<p class="meta">Generated {generated_at} · Powered by Muraqib RAG + qwen2.5:7b</p>
 
 <div class="stats">
   <div class="stat-card"><div class="label">Articles Scraped</div>
@@ -127,7 +127,7 @@ def generate_html(recommendations: list[dict], scrape_stats: dict) -> Path:
   </table>
 </div>
 
-<div class="footer">Daleel QSE RAG System · {date_str} · For informational purposes only, not financial advice.</div>
+<div class="footer">Muraqib (مراقب) · QSE Gathering and Analysis System · {date_str} · For informational purposes only, not financial advice.</div>
 </body>
 </html>"""
 
@@ -186,7 +186,7 @@ def send_discord_digest(recommendations: list[dict], scrape_stats: dict, report_
         return "\n".join(lines)
 
     message = (
-        f"📊 **QSE Daily Analysis — {date_str}**\n"
+        f"📊 **Muraqib · QSE Daily Analysis — {date_str}**\n"
         f"News scraped: **{scrape_stats.get('total',0)}** articles "
         f"({scrape_stats.get('new',0)} new today)\n\n"
         f"🟢 **BUY ({len(buys)})**\n{fmt_list(buys)}\n\n"

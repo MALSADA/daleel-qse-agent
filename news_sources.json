@@ -1,7 +1,7 @@
 {
   "version": "1.1",
   "updated": "2026-05-16",
-  "description": "News source registry for the Daleel QSE news pipeline. To add a source: append an entry to the array and set enabled=true. To pause a source: set enabled=false. The pipeline reads this file on every run — no code changes needed.",
+  "description": "News source registry for Muraqib (مراقب) — QSE Gathering and Analysis System. To add a source: append an entry to the array and set enabled=true. To pause a source: set enabled=false. The pipeline reads this file on every run — no code changes needed.",
   "sources": [
 
     {

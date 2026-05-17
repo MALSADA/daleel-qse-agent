@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Embedding pipeline: sentence-transformers → ChromaDB.
+Muraqib (مراقب) — embedding pipeline: sentence-transformers → ChromaDB.
 Model: intfloat/multilingual-e5-base (Arabic + English, 768 dims, 512 token limit).
 
 e5 models require specific prefixes for best retrieval quality:

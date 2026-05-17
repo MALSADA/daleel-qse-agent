@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Historical price fetcher for QSE stocks via yfinance (.QA suffix).
+Muraqib (مراقب) — historical price fetcher for QSE stocks via yfinance (.QA suffix).
 Provides backfill + per-stock metric computation for the LLM prompt.
 """
 

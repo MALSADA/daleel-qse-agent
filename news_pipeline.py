@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Nightly QSE News RAG Pipeline
-  1. Scrape news from QNA, Al Jazeera, Qatar TV, Al Watan
+Muraqib (مراقب) — QSE Gathering and Analysis System
+  1. Scrape news from QNA, Al Jazeera, Qatar TV, Al Watan, and 30+ sources
   2. Store new articles in SQLite
   3. Embed new articles into ChromaDB
   4. Analyze each QSE stock with RAG + LLM

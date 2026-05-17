@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SQLite schema and CRUD for the news RAG system."""
+"""Muraqib (مراقب) — SQLite schema and CRUD for the QSE Gathering and Analysis System."""
 
 import hashlib
 import json
