@@ -593,6 +593,15 @@ def remove_note(index):
     delete_note(index)
     return jsonify({"ok": True})
 
+@app.route("/health")
+def health():
+    """Unauthenticated health check for watchdog monitoring."""
+    soul_age_s = None
+    if SOUL_PATH.exists():
+        soul_age_s = round(time.time() - SOUL_PATH.stat().st_mtime)
+    return jsonify({"status": "ok", "model": MODEL, "soul_age_seconds": soul_age_s})
+
+
 @app.route("/api/prices", methods=["GET"])
 def get_prices():
     return jsonify(parse_prices_from_soul())

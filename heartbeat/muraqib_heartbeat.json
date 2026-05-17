@@ -1,0 +1,10 @@
+{
+  "pipeline_running": false,
+  "current_stage": "done",
+  "stocks_completed": 2,
+  "stocks_total": 54,
+  "started_at": "2026-05-17T14:22:00",
+  "last_heartbeat_utc": "2026-05-17T05:23:04.294341Z",
+  "pid": 414175,
+  "current_symbol": null
+}

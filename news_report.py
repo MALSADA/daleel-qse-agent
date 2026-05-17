@@ -14,9 +14,10 @@ import requests
 from news_db import get_today_recommendations
 
 REPORTS_DIR = Path(__file__).parent / "reports"
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_BOT_TOKEN  = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_WEBHOOK    = os.getenv("DISCORD_WEBHOOK", "")
 DISCORD_CHANNEL_ID = "1503771223358832710"
-DISCORD_API = "https://discord.com/api/v10"
+DISCORD_API        = "https://discord.com/api/v10"
 
 
 # ---------------------------------------------------------------------------
@@ -207,14 +208,13 @@ def send_discord_digest(recommendations: list[dict], scrape_stats: dict, report_
 # ---------------------------------------------------------------------------
 
 def send_discord_alert(message: str) -> bool:
-    """Send a plain-text alert to the configured Discord channel (no attachment)."""
-    if not DISCORD_BOT_TOKEN:
-        print("[discord] No bot token, cannot send alert.", file=sys.stderr)
+    """Send a plain-text alert via Discord webhook (no Bot Token needed)."""
+    if not DISCORD_WEBHOOK:
+        print("[discord] No DISCORD_WEBHOOK configured, cannot send alert.", file=sys.stderr)
         return False
     try:
         r = requests.post(
-            f"{DISCORD_API}/channels/{DISCORD_CHANNEL_ID}/messages",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            DISCORD_WEBHOOK,
             json={"content": message[:1990]},
             timeout=15,
         )

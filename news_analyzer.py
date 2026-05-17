@@ -7,6 +7,7 @@ then ask qwen2.5:7b for a BUY / SELL / HOLD recommendation with justification.
 import json
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -18,6 +19,7 @@ from news_db import get_articles_by_ids, get_price_history, save_recommendation
 from news_price_history import get_price_metrics, format_metrics_for_prompt
 from news_embedder import query as rag_query
 from news_scraper import QSE_ALIASES
+from heartbeat import write_heartbeat
 
 OLLAMA_URL = "http://localhost:11434"
 MODEL = "qwen2.5:7b"
@@ -395,11 +397,29 @@ def analyze_all(symbols=None, max_workers: int = 2) -> list[dict]:
     target_symbols = symbols or list(stock_data.keys())
     total = len(target_symbols)
     print(f"[analyzer] Analyzing {total} stocks (workers={max_workers})...", file=sys.stderr)
+    write_heartbeat(current_stage="stage4_analyze", stocks_total=total, stocks_completed=0)
+
+    # Thread-safe completion counter for heartbeat
+    _counter = [0]
+    _counter_lock = threading.Lock()
+
+    def _analyze_with_heartbeat(sym: str, idx: int) -> dict | None:
+        write_heartbeat(current_stage="stage4_analyze", current_symbol=sym)
+        result = _analyze_one(sym, stock_data.get(sym, {"name": sym}), total, idx)
+        with _counter_lock:
+            _counter[0] += 1
+            write_heartbeat(
+                current_stage="stage4_analyze",
+                current_symbol=sym,
+                stocks_completed=_counter[0],
+                stocks_total=total,
+            )
+        return result
 
     recommendations = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_analyze_one, sym, stock_data.get(sym, {"name": sym}), total, i): sym
+            pool.submit(_analyze_with_heartbeat, sym, i): sym
             for i, sym in enumerate(target_symbols, 1)
         }
         for future in as_completed(futures):

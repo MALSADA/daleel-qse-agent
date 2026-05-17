@@ -34,6 +34,7 @@ from news_scraper import scrape_all, update_aliases_from_listed_companies
 from news_embedder import embed_pending, collection_count, delete_embeddings
 from news_analyzer import analyze_all
 from news_report import generate_and_send
+from heartbeat import write_heartbeat, clear_heartbeat
 
 LOGS_DIR = Path(__file__).parent / "logs"
 OLLAMA_URL = "http://localhost:11434"
@@ -75,6 +76,15 @@ def run_pipeline(symbols=None):
     setup_logging()
     log("=" * 60)
     log("QSE News RAG Pipeline starting")
+    write_heartbeat(
+        pipeline_running=True,
+        started_at=datetime.now().isoformat(),
+        current_stage="init",
+        current_symbol=None,
+        stocks_completed=0,
+        stocks_total=0,
+        errors_so_far=[],
+    )
 
     # 1. Init DB
     log("Initializing database...")
@@ -82,6 +92,7 @@ def run_pipeline(symbols=None):
 
     # 1b. Fetch live listed companies from QSE (authoritative source)
     log("Fetching listed companies from QSE...")
+    write_heartbeat(current_stage="stage1b_companies")
     listed_companies = []
     try:
         from qse_scraper import fetch_listed_companies
@@ -107,6 +118,7 @@ def run_pipeline(symbols=None):
 
     # 1c. Update price history from Yahoo Finance (incremental — fills only missing dates)
     log("Updating price history from Yahoo Finance...")
+    write_heartbeat(current_stage="stage1c_prices")
     try:
         result = backfill_history(listed_symbols, days=365)
         covered = sum(1 for v in result.values() if v > 0)
@@ -114,8 +126,9 @@ def run_pipeline(symbols=None):
     except Exception as e:
         log(f"  WARNING: price history update failed: {e}")
 
-    # 1c. Cleanup articles older than 90 days
+    # 1d. Cleanup articles older than 90 days
     log("Cleaning up articles older than 90 days...")
+    write_heartbeat(current_stage="stage1d_prune")
     try:
         old_ids = delete_old_articles(days=90)
         if old_ids:
@@ -128,6 +141,7 @@ def run_pipeline(symbols=None):
 
     # 2. Scrape
     log("Scraping news sources...")
+    write_heartbeat(current_stage="stage1a_scrape")
     t0 = time.time()
     run_id = start_scrape_run()
     errors = []
@@ -159,6 +173,7 @@ def run_pipeline(symbols=None):
 
     # 4. Embed
     log("Embedding new articles into ChromaDB...")
+    write_heartbeat(current_stage="stage3_embed")
     t0 = time.time()
     try:
         embedded = embed_pending()
@@ -188,12 +203,14 @@ def run_pipeline(symbols=None):
 
     # 6. Report
     log("Generating HTML report and Discord notification...")
+    write_heartbeat(current_stage="stage5_report")
     try:
         path = generate_and_send(scrape_stats)
         log(f"  Report: {path}")
     except Exception as e:
         log(f"  ERROR in report: {e}")
 
+    clear_heartbeat()
     log("Pipeline complete.")
     log("=" * 60)
 

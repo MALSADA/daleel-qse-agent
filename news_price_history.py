@@ -5,6 +5,7 @@ Provides backfill + per-stock metric computation for the LLM prompt.
 """
 
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta
 
 import yfinance as yf
@@ -30,15 +31,26 @@ def backfill_history(symbols: list[str], days: int = 365) -> dict[str, int]:
     tickers = [f"{s}{QA_SUFFIX}" for s in symbols]
     print(f"[price] Downloading {len(tickers)} tickers ({days}d history)...", file=sys.stderr)
 
-    # Batch download — much faster than one-by-one
-    raw = yf.download(
-        tickers,
+    # Batch download wrapped in a thread so we can enforce a wall-clock timeout.
+    # yfinance.download() has no built-in timeout and can block indefinitely on
+    # network failure or Yahoo rate-limiting.
+    _dl_kwargs = dict(
         start=start.strftime("%Y-%m-%d"),
         end=end.strftime("%Y-%m-%d"),
         progress=False,
         auto_adjust=True,
         group_by="ticker",
     )
+    try:
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(yf.download, tickers, **_dl_kwargs)
+            raw = fut.result(timeout=120)
+    except FuturesTimeout:
+        print("[price] yfinance.download() timed out after 120s — skipping price history update.", file=sys.stderr)
+        return {s: 0 for s in symbols}
+    except Exception as e:
+        print(f"[price] yfinance.download() failed: {e}", file=sys.stderr)
+        return {s: 0 for s in symbols}
 
     summary = {}
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=HeartBeat — QSE Platform Watchdog (Muraqib + Daleel)
+Documentation=file:///home/sadashi/qse-agent/heartbeat/README.md
+After=network.target qse-server.service
+Wants=qse-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/sadashi/qse-agent
+ExecStart=/usr/bin/python3 /home/sadashi/qse-agent/heartbeat/heartbeat.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/home/sadashi/qse-agent/heartbeat/logs/heartbeat.log
+StandardError=append:/home/sadashi/qse-agent/heartbeat/logs/heartbeat.log
+Environment=PYTHONPATH=/home/sadashi/qse-agent
+
+[Install]
+WantedBy=default.target
