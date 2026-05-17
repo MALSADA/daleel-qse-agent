@@ -237,6 +237,93 @@ def check_alerts(holdings: dict, price_map: dict):
 
 
 # ---------------------------------------------------------------------------
+# RAG recommendations section
+# ---------------------------------------------------------------------------
+
+def recommendations_section() -> list[str]:
+    """
+    Read today's (or most recent available) BUY/SELL/HOLD recommendations
+    from the news RAG pipeline and format them for SOUL.md.
+    """
+    try:
+        import sqlite3
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news.db")
+        if not os.path.exists(db_path):
+            return []
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+
+        # Use today's date; fall back to the most recent run date if today has none
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = conn.execute(
+            "SELECT * FROM recommendations WHERE run_date = ? ORDER BY recommendation, sentiment_score DESC",
+            (today,)
+        ).fetchall()
+
+        if not rows:
+            row = conn.execute(
+                "SELECT run_date FROM recommendations ORDER BY run_date DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                conn.close()
+                return []
+            latest_date = row["run_date"]
+            rows = conn.execute(
+                "SELECT * FROM recommendations WHERE run_date = ? ORDER BY recommendation, sentiment_score DESC",
+                (latest_date,)
+            ).fetchall()
+            date_label = f"{latest_date} (most recent)"
+        else:
+            date_label = today
+
+        conn.close()
+
+        buys  = [r for r in rows if r["recommendation"] == "BUY"]
+        sells = [r for r in rows if r["recommendation"] == "SELL"]
+        holds = [r for r in rows if r["recommendation"] == "HOLD"]
+
+        lines = [f"## Daily Investment Analysis — {date_label}"]
+        lines.append("*Source: Daleel RAG pipeline (news + 1-year price history + LLM). Not financial advice.*")
+        lines.append("")
+
+        if buys:
+            lines.append(f"### BUY Signals ({len(buys)})")
+            lines.append("sym|company|sentiment|direction|prediction%|justification")
+            for r in buys:
+                lines.append(
+                    f"{r['stock_symbol']}|{r['stock_name']}|"
+                    f"{r['sentiment_score']:+.1f}|{r['price_direction']}|"
+                    f"{r['price_prediction_pct']:+.1f}%|"
+                    f"{(r['justification'] or '')[:200]}"
+                )
+            lines.append("")
+
+        if sells:
+            lines.append(f"### SELL Signals ({len(sells)})")
+            lines.append("sym|company|sentiment|direction|prediction%|justification")
+            for r in sells:
+                lines.append(
+                    f"{r['stock_symbol']}|{r['stock_name']}|"
+                    f"{r['sentiment_score']:+.1f}|{r['price_direction']}|"
+                    f"{r['price_prediction_pct']:+.1f}%|"
+                    f"{(r['justification'] or '')[:200]}"
+                )
+            lines.append("")
+
+        if holds:
+            lines.append(f"### HOLD ({len(holds)} stocks)")
+            lines.append(", ".join(r["stock_symbol"] for r in holds))
+            lines.append("")
+
+        return lines
+
+    except Exception as e:
+        print(f"[soul] Could not load recommendations: {e}", file=sys.stderr)
+        return []
+
+
+# ---------------------------------------------------------------------------
 # SOUL.md formatter
 # ---------------------------------------------------------------------------
 
@@ -260,6 +347,12 @@ def format_soul(data: dict, holdings: dict, price_map: dict) -> str:
     if port_lines:
         lines.extend(port_lines)
         lines.append("")
+
+    # Daily RAG recommendations
+    rec_lines = recommendations_section()
+    if rec_lines:
+        lines.extend(rec_lines)
+        lines.append("---\n")
 
     lines.append("## Live Market Data")
     lines.append(f"**Last Updated:** {fetched} | **Market:** {mstatus} | **Session Date:** {mdate} {mtime}")

@@ -34,9 +34,9 @@ UPDATE_SCRIPT  = Path(__file__).parent / "qse_update_soul.py"
 
 # ── Config ─────────────────────────────────────────────────────────────────
 OLLAMA_URL       = "http://127.0.0.1:11434"
-MODEL            = "llama3.2:latest"
+MODEL            = "qwen2.5:3b"
 PORT             = 7400
-NUM_CTX          = 8192
+NUM_CTX          = 4096
 MONITOR_INTERVAL = 60
 
 # ── Credentials ─────────────────────────────────────────────────────────────
@@ -341,7 +341,30 @@ def _check_targets():
 
 # ── Ollama streaming ─────────────────────────────────────────────────────────
 
+def get_busy_model() -> str | None:
+    """Return the name of a model currently loaded in Ollama that isn't ours, or None."""
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/ps", timeout=3)
+        for entry in r.json().get("models", []):
+            name = entry.get("name", "")
+            if MODEL not in name:
+                return name
+    except Exception:
+        pass
+    return None
+
 def stream_chat(messages: list):
+    busy = get_busy_model()
+    if busy:
+        notice = (
+            f"⚠️ The data pipeline is currently running ({busy}). "
+            "Daleel will be back online once it finishes — usually a few minutes. "
+            "Please try again shortly."
+        )
+        yield f"data: {json.dumps({'token': notice})}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"
+        return
+
     system = get_system_prompt()
     full_messages = [{"role": "system", "content": system}] + messages
     payload = {

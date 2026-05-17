@@ -30,7 +30,7 @@ if _env_path.exists():
 
 from news_db import init_db, insert_article, start_scrape_run, finish_scrape_run, delete_old_articles
 from news_price_history import backfill_history
-from news_scraper import scrape_all
+from news_scraper import scrape_all, update_aliases_from_listed_companies
 from news_embedder import embed_pending, collection_count, delete_embeddings
 from news_analyzer import analyze_all
 from news_report import generate_and_send
@@ -96,6 +96,14 @@ def run_pipeline(symbols=None):
         listed_companies = [{"symbol": s, "name": s, "sector": ""} for s in QSE_ALIASES.keys()]
 
     listed_symbols = [c["symbol"] for c in listed_companies]
+
+    # Inject Arabic names from listed-companies into the entity alias lookup
+    try:
+        ar_added = update_aliases_from_listed_companies(listed_companies)
+        if ar_added:
+            log(f"  Added {ar_added} Arabic company names to alias lookup.")
+    except Exception as e:
+        log(f"  WARNING: could not update Arabic aliases: {e}")
 
     # 1c. Update price history from Yahoo Finance (incremental — fills only missing dates)
     log("Updating price history from Yahoo Finance...")

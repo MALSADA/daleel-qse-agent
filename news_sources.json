@@ -90,6 +90,42 @@
     },
 
     {
+      "id": "qatar_tv",
+      "name": "Qatar TV (QTV)",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://www.qtv.qa/rss",
+        "https://www.qtv.qa/feed",
+        "https://www.qtv.qa/?feed=rss2",
+        "https://www.qtv.qa/ar/rss",
+        "https://www.qtv.qa/en/rss"
+      ],
+      "html_fallback_url": "https://www.qtv.qa/ar/news",
+      "html_article_selectors": ["article a", ".news-item a", ".post-title a", "h2 a", "h3 a"],
+      "notes": "Qatar Television official website. RSS URL uncertain — multiple variants tried. HTML fallback scrapes news listing."
+    },
+
+    {
+      "id": "al_watan",
+      "name": "Al Watan Qatar",
+      "tier": 2,
+      "enabled": true,
+      "default_language": "ar",
+      "rss_urls": [
+        "https://alwatan.com.qa/rss",
+        "https://alwatan.com.qa/feed",
+        "https://alwatan.com.qa/?feed=rss2",
+        "https://www.alwatan.com.qa/rss",
+        "https://www.alwatan.com.qa/feed"
+      ],
+      "html_fallback_url": "https://alwatan.com.qa/category/economy",
+      "html_article_selectors": ["article a", ".post-title a", ".entry-title a", "h2 a", "h3 a"],
+      "notes": "Al Watan Arabic Qatari daily newspaper. Key for QSE corporate news in Arabic press. RSS URL uncertain — test with: curl -I https://alwatan.com.qa/feed"
+    },
+
+    {
       "_comment": "===== TIER 2 — MAJOR QATAR NEWS OUTLETS =====",
       "id": "peninsula",
       "name": "The Peninsula Qatar",

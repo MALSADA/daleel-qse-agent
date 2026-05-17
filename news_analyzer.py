@@ -104,23 +104,23 @@ def _retrieve_news(symbol: str, name: str) -> list[dict]:
     # Entity-rank: tier by relevance to this specific stock
     #   Tier 1 — article explicitly tagged to this symbol
     #   Tier 2 — article has no specific stock entity (general market news)
-    #   Tier 3 — article tagged to a DIFFERENT specific stock (cross-contamination)
-    tier1, tier2, tier3 = [], [], []
+    #   Tier 3 — article tagged to a DIFFERENT specific stock — NEVER included
+    #             (cross-company articles cause wrong recommendations, e.g. QGMD news
+    #              appearing in a MEZA analysis because both are small Qatar companies
+    #              with similar embeddings)
+    tier1, tier2 = [], []
     for art in candidates:
         entities = json.loads(art.get("entities") or "[]")
         if symbol in entities:
             tier1.append(art)
         elif not entities:
             tier2.append(art)
-        else:
-            tier3.append(art)  # tagged to another company — lowest priority
+        # else: tagged to a different company — discard entirely
 
-    ranked = (tier1 + tier2 + tier3)[:MAX_CONTEXT_ARTICLES]
+    ranked = (tier1 + tier2)[:MAX_CONTEXT_ARTICLES]
 
-    if tier3 and len(tier1) + len(tier2) < MAX_CONTEXT_ARTICLES:
-        # Only log when cross-company articles are actually included
-        cross = [a["title"][:60] for a in tier3[:2]]
-        print(f"[analyzer] {symbol}: included {len(tier3)} cross-company articles — {cross}",
+    if not ranked:
+        print(f"[analyzer] {symbol}: no relevant articles (tier1={len(tier1)} tier2={len(tier2)})",
               file=sys.stderr)
 
     return ranked

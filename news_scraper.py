@@ -86,10 +86,10 @@ def classify_category(text: str, lang: str = "en") -> str:
 #   - GECO was a duplicate phantom ticker (not a real QSE symbol); removed.
 QSE_ALIASES: dict[str, list[str]] = {
     # --- Banking ---
-    "QNBK": ["Qatar National Bank", "QNB", "بنك قطر الوطني", "بنك قطر"],
-    "CBQK": ["Commercial Bank", "Commercial Bank of Qatar", "البنك التجاري", "CBQ"],
-    "DHBK": ["Doha Bank", "بنك الدوحة"],
-    "ABQK": ["Ahli Bank", "Ahli Bank Qatar", "المصرف الأهلي"],
+    "QNBK": ["Qatar National Bank", "QNB", "بنك قطر الوطني", "بنك قطر الوطني ش.م.ق"],
+    "CBQK": ["Commercial Bank", "Commercial Bank of Qatar", "البنك التجاري", "البنك التجاري القطري", "CBQ"],
+    "DHBK": ["Doha Bank", "بنك الدوحة", "بنك الدوحة ش.م.ق"],
+    "ABQK": ["Ahli Bank", "Ahli Bank Qatar", "المصرف الأهلي", "المصرف الأهلي القطري"],
     "QIIK": ["Qatar International Islamic Bank", "International Islamic Bank",
              "بنك قطر الدولي الإسلامي", "QIIB"],
     "QIBK": ["Qatar Islamic Bank", "QIB", "بنك قطر الإسلامي"],
@@ -99,67 +99,98 @@ QSE_ALIASES: dict[str, list[str]] = {
     "QFBQ": ["Lesha Bank", "Qatar First Bank", "QFC Bank", "بنك ليشا", "بنك قطر الأول"],
     "DUBK": ["Dukhan Bank", "بنك دخان"],
     # --- Telecom ---
-    "ORDS": ["Ooredoo", "أوريدو", "Qtel", "Qatar Telecom"],
+    "ORDS": ["Ooredoo", "أوريدو", "Qtel", "Qatar Telecom", "أوريدو قطر"],
     "VFQS": ["Vodafone Qatar", "فودافون قطر"],
     # --- Insurance ---
-    "QATI": ["Qatar Insurance", "Qatar Insurance Company", "QIC", "قطر للتأمين"],
-    "DOHI": ["Doha Insurance", "Doha Insurance Group", "التأمين الدوحة"],
-    "QGRI": ["Qatar General Insurance", "General Insurance", "قطر للتأمين العام"],
-    "AKHI": ["Alkhaleej Takaful", "Al Khaleej Takaful", "الخليج للتكافل"],
-    "BEMA": ["Beema", "بيما"],
+    "QATI": ["Qatar Insurance", "Qatar Insurance Company", "QIC", "قطر للتأمين",
+             "شركة قطر للتأمين"],
+    "DOHI": ["Doha Insurance", "Doha Insurance Group", "التأمين الدوحة",
+             "مجموعة الدوحة للتأمين"],
+    "QGRI": ["Qatar General Insurance", "General Insurance", "Qatar General Insurance and Reinsurance",
+             "قطر للتأمين العام", "قطر للتأمين العام وإعادة التأمين"],
+    "AKHI": ["Alkhaleej Takaful", "Al Khaleej Takaful", "الخليج للتكافل",
+             "شركة الخليج للتكافل"],
+    "BEMA": ["Beema", "بيما", "بيما للتأمين"],
     # IHGS rebranded to Inma Holding; old name kept for historical coverage
     "IHGS": ["Inma Holding", "Inma", "Islamic Holding Group", "انماء القابضة",
-             "المجموعة الإسلامية القابضة"],
-    "QISI": ["Qatar Islamic Insurance", "قطر للتأمين الإسلامي"],
+             "المجموعة الإسلامية القابضة", "إنماء القابضة"],
+    "QISI": ["Qatar Islamic Insurance", "قطر للتأمين الإسلامي",
+             "شركة قطر للتأمين الإسلامي"],
+    # QLMI rebranded to QLM Life & Medical Insurance
+    "QLMI": ["QLM Life", "QLM", "QL Investors", "مستثمرو QL", "QLM للتأمين على الحياة",
+             "QLM للتأمين على الحياة والطبي"],
     # --- Industrials / Energy ---
-    "IQCD": ["Industries Qatar", "إندستريز قطر"],
-    "MPHC": ["Mesaieed Petrochemical", "Mesaieed", "مسيعيد للبتروكيماويات", "QAFCO"],
-    "QAMC": ["QAMCO", "Qatar Aluminium Manufacturing", "قاتكو", "قطر للألومنيوم"],
-    "QIMD": ["Qatar Industrial Manufacturing", "Industries Manufacturing", "الصناعية للإنتاج"],
+    "IQCD": ["Industries Qatar", "إندستريز قطر", "صناعات قطر"],
+    "MPHC": ["Mesaieed Petrochemical", "Mesaieed", "مسيعيد للبتروكيماويات",
+             "شركة مسيعيد للبتروكيماويات القابضة", "QAFCO"],
+    "QAMC": ["QAMCO", "Qatar Aluminium Manufacturing", "قاتكو", "قطر للألومنيوم",
+             "شركة قطر للألمنيوم"],
+    "QIMD": ["Qatar Industrial Manufacturing", "Industries Manufacturing",
+             "الصناعية للإنتاج", "شركة قطر للتصنيع الصناعي",
+             "قطر للتصنيع الصناعي"],
     # QEWS rebranded to Nebras Energy; old name kept for historical articles
     "QEWS": ["Nebras Energy", "Nebras", "Qatar Electricity", "Qatar Electricity and Water",
-             "نبراس للطاقة", "كهرباء قطر ومياهها"],
-    "QGMD": ["Qatar German Medical Devices", "Qatar German Co", "QGMD",
-             "الشركة القطرية الألمانية للأجهزة الطبية", "قطر الألمانية"],
+             "نبراس للطاقة", "كهرباء قطر ومياهها", "شركة نبراس للطاقة"],
+    "QGMD": ["Qatar German Medical Devices", "Qatar German Co",
+             "الشركة القطرية الألمانية للأجهزة الطبية", "قطر الألمانية",
+             "القطرية الألمانية للأجهزة الطبية"],
+    "QNCD": ["National Cement", "Qatar National Cement", "الأسمنت الوطنية",
+             "شركة قطر الوطنية للإسمنت", "قطر الوطنية للإسمنت"],
     # --- Transport / Logistics ---
-    "QGTS": ["Nakilat", "ناقلات", "Qatar Gas Transport", "Qatar LNG Transport"],
-    "QNNS": ["Qatar Navigation", "Milaha", "الملاحة القطرية", "ميلاها"],
-    "GWCS": ["Gulf Warehousing", "Gulf Warehousing Company", "الخليجية للمستودعات"],
+    "QGTS": ["Nakilat", "ناقلات", "Qatar Gas Transport", "Qatar LNG Transport",
+             "ناقلات قطر للغاز والطاقة", "شركة ناقلات"],
+    "QNNS": ["Qatar Navigation", "Milaha", "الملاحة القطرية", "ميلاها",
+             "شركة قطر للملاحة", "ميلاها للشحن"],
+    "GWCS": ["Gulf Warehousing", "Gulf Warehousing Company", "الخليجية للمستودعات",
+             "شركة الخليج للمستودعات"],
     # --- Real Estate ---
-    "BRES": ["Barwa Real Estate", "Barwa", "بروة العقارية", "بروة"],
-    "UDCD": ["United Development Company", "UDC", "الشركة المتحدة للتطوير"],
-    "ERES": ["Ezdan Holding", "Ezdan", "إزدان القابضة"],
-    "IGRD": ["Estithmar Holding", "Estithmar", "استثمار القابضة"],
-    "MRDS": ["Mazaya Qatar", "Mazaya", "مزايا قطر"],
+    "BRES": ["Barwa Real Estate", "Barwa", "بروة العقارية", "بروة",
+             "شركة بروة العقارية"],
+    "UDCD": ["United Development Company", "UDC", "الشركة المتحدة للتطوير",
+             "شركة التطوير المتحدة"],
+    "ERES": ["Ezdan Holding", "Ezdan", "إزدان القابضة", "إزدان",
+             "مجموعة إزدان القابضة"],
+    "IGRD": ["Estithmar Holding", "Estithmar", "استثمار القابضة",
+             "استثمار القابضة ش.م.ق"],
+    "MRDS": ["Mazaya Qatar", "Mazaya", "مزايا قطر", "شركة مزايا قطر العقارية"],
     # --- Consumer / Retail ---
-    "MERS": ["Al Meera", "الميرة", "Al Meera Consumer Goods"],
-    "ZHCD": ["Zad Holding", "Zad", "زاد القابضة"],
-    "WDAM": ["Widam Food", "Widam", "ودام"],
-    "QFLS": ["Qatar Fuel", "Woqod", "وقود", "قطر للوقود"],
-    "MCGS": ["Medicare Group", "Medicare", "ميديكير"],
-    "QCFS": ["Qatar Cinema", "Qatar Cinema and Film Distribution", "سينما قطر"],
+    "MERS": ["Al Meera", "الميرة", "Al Meera Consumer Goods",
+             "شركة الميرة للسلع الاستهلاكية"],
+    "ZHCD": ["Zad Holding", "Zad", "زاد القابضة", "شركة زاد القابضة"],
+    "WDAM": ["Widam Food", "Widam", "ودام", "شركة ودام للغذاء"],
+    "QFLS": ["Qatar Fuel", "Woqod", "وقود", "قطر للوقود", "شركة قطر للوقود"],
+    "MCGS": ["Medicare Group", "Medicare", "ميديكير", "مجموعة ميديكير"],
+    "QCFS": ["Qatar Cinema", "Qatar Cinema and Film Distribution", "سينما قطر",
+             "شركة قطر للسينما وتوزيع الأفلام"],
+    "BLDN": ["Baladna", "بلدنا", "شركة بلدنا لإنتاج الأغذية"],
     # --- Conglomerates / Services ---
-    "GISS": ["Gulf International Services", "GIS", "الخليج الدولية للخدمات"],
-    "MCCS": ["Mannai Corporation", "Mannai Corp", "شركة مناعي"],
-    "SIIS": ["Salam International", "سلام الدولية"],
-    "NLCS": ["National Leasing", "Alijarah Holding", "التأجير الوطنية", "الإجارة القابضة"],
-    "DBIS": ["Dlala Brokerage", "Dlala", "دلالة"],
-    "AHCS": ["Aamal Company", "Aamal", "أعمال"],
-    "QOIS": ["Qatar Oman Investment", "قطر عمان للاستثمار"],
-    "QNCD": ["National Cement", "Qatar National Cement", "الأسمنت الوطنية"],
-    "MKDM": ["Mekdam Holding", "Mekdam", "مكدام"],
-    "MEZA": ["MEEZA QSTP", "MEEZA", "ميزا"],
-    "FALH": ["Faleh Education", "Faleh", "فالح"],
-    "MHAR": ["Al Mahhar Holding", "Al Mahhar", "المهار"],
-    "MFMS": ["Mosanada Services", "Mosanada", "مسانده"],
+    "GISS": ["Gulf International Services", "الخليج الدولية للخدمات",
+             "شركة الخليج الدولية للخدمات"],
+    "MCCS": ["Mannai Corporation", "Mannai Corp", "شركة مناعي", "مناعي للتجارة",
+             "مناعي"],
+    "SIIS": ["Salam International", "سلام الدولية", "شركة سلام الدولية للاستثمار"],
+    "NLCS": ["National Leasing", "Alijarah Holding", "التأجير الوطنية",
+             "الإجارة القابضة", "شركة الإجارة القابضة"],
+    "DBIS": ["Dlala Brokerage", "Dlala", "دلالة", "دلالة للوساطة",
+             "شركة دلالة للوساطة وخدمات الاستثمار"],
+    "AHCS": ["Aamal Company", "Aamal", "أعمال", "شركة أعمال"],
+    "QOIS": ["Qatar Oman Investment", "قطر عمان للاستثمار",
+             "شركة قطر عمان للاستثمار"],
+    "MKDM": ["Mekdam Holding", "Mekdam", "مكدام", "مكدام القابضة",
+             "شركة مكدام القابضة"],
+    "MEZA": ["MEEZA QSTP", "MEEZA", "ميزا", "ميزا للتكنولوجيا",
+             "مركز خدمات التكنولوجيا المتقدمة", "MEEZA Managed IT Services"],
+    "FALH": ["Faleh Education", "Faleh", "فالح", "شركة فالح للخدمات",
+             "فالح للتطوير التعليمي"],
+    "MHAR": ["Al Mahhar Holding", "Al Mahhar", "المهار", "المهار القابضة",
+             "شركة المهار القابضة"],
+    "MFMS": ["Mosanada Services", "Mosanada", "مسانده", "مسانده لخدمات الأعمال",
+             "شركة مسانده"],
+    "QIGD": ["The Investors", "Investors Group", "مجموعة المستثمرين",
+             "شركة المستثمرين"],
     # --- Funds / ETFs ---
-    "QETF": ["QE Index ETF", "QSE ETF", "بورصة قطر ETF"],
-    "QATR": ["Al Rayan Qatar ETF", "Rayan ETF"],
-    # QLMI rebranded to QLM Life & Medical Insurance
-    "QLMI": ["QLM Life", "QLM", "QL Investors", "مستثمرو QL", "QLM للتأمين على الحياة"],
-    # --- Other ---
-    "BLDN": ["Baladna", "بلدنا"],
-    "QIGD": ["The Investors", "Investors Group", "مجموعة المستثمرين"],
+    "QETF": ["QE Index ETF", "QSE ETF", "بورصة قطر ETF", "صندوق مؤشر بورصة قطر"],
+    "QATR": ["Al Rayan Qatar ETF", "Rayan ETF", "صندوق الريان"],
 }
 
 # ---------------------------------------------------------------------------
@@ -208,6 +239,33 @@ def get_aliases() -> dict:
     return _aliases_cache
 
 
+def update_aliases_from_listed_companies(companies: list) -> int:
+    """
+    Inject Arabic names (name_ar) from fetch_listed_companies() output into the
+    live aliases cache. Call this in the pipeline after fetch_listed_companies()
+    returns, before any article scraping begins.
+
+    Returns the number of Arabic names added.
+    """
+    global _aliases_cache
+    if _aliases_cache is None:
+        _aliases_cache = {k: list(v) for k, v in QSE_ALIASES.items()}
+
+    added = 0
+    for c in companies:
+        sym = c.get("symbol", "")
+        ar_name = (c.get("name_ar") or "").strip()
+        if not sym or not ar_name:
+            continue
+        if sym not in _aliases_cache:
+            _aliases_cache[sym] = [ar_name]
+            added += 1
+        elif not any(ar_name in a or a in ar_name for a in _aliases_cache[sym]):
+            _aliases_cache[sym].append(ar_name)
+            added += 1
+    return added
+
+
 def extract_entities(text: str) -> list[str]:
     """Return QSE ticker symbols whose company name or ticker appears in text."""
     found = []
@@ -217,7 +275,22 @@ def extract_entities(text: str) -> list[str]:
         if re.search(r"\b" + re.escape(ticker.lower()) + r"\b", t_lower):
             found.append(ticker)
             continue
-        if any(alias.lower() in t_lower for alias in aliases):
+        matched = False
+        for alias in aliases:
+            a_lower = alias.lower()
+            # Short single-word English abbreviations (QNB, QIB, GIS, UDC ≤ 6 chars)
+            # need word boundaries to avoid false positives — "QNB" must not match
+            # "QNBK", "GIS" must not match "GISS", etc.
+            if not any("؀" <= c <= "ۿ" for c in alias) and len(a_lower.split()) == 1 and len(a_lower) <= 6:
+                if re.search(r"\b" + re.escape(a_lower) + r"\b", t_lower):
+                    matched = True
+                    break
+            else:
+                # Multi-word phrases and Arabic text: substring match is fine
+                if a_lower in t_lower:
+                    matched = True
+                    break
+        if matched:
             found.append(ticker)
     return list(set(found))
 

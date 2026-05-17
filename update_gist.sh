@@ -29,13 +29,6 @@ if [ -z "$URL" ]; then
     exit 1
 fi
 
-# Skip if URL hasn't changed
-LAST_URL=$(cat "$LAST_URL_FILE" 2>/dev/null)
-if [ "$URL" = "$LAST_URL" ]; then
-    echo "[update_gist] URL unchanged: $URL"
-    exit 0
-fi
-
 # Update Gist
 curl -s -X PATCH "https://api.github.com/gists/$GIST_ID" \
     -H "Authorization: token $GIST_GITHUB_TOKEN" \

@@ -229,14 +229,26 @@ _SECTOR_MAP = {
     "Real Estate":                "Real Estate",
     "Telecoms":                   "Telecoms",
     "Transportation":             "Transportation",
+    # Additional sectors for newer QSE listings
+    "Technology":                 "Technology",
+    "Education":                  "Education",
+    "Healthcare":                 "Healthcare",
+    "Media":                      "Media",
 }
-_SKIP_LINES = {"Submit", "Right Issues", "All", "Filter Listed Companies by Sector:"}
+_SKIP_LINES = {"Submit", "Right Issues", "All", "Filter Listed Companies by Sector:",
+               "Filter by Sector", "Sector", "Symbol", "Name"}
+
+# Regex to detect sector header lines: title-case phrase, no stock symbol pattern
+_SECTOR_HEADER_RE = re.compile(r'^[A-Z][a-zA-Z &/()+,\-]+$')
 
 
-def _parse_listed_companies(text: str) -> list[dict]:
+def _parse_listed_companies(text: str, default_lang: str = "en") -> list[dict]:
     """
     Parse company list from QSE listed-companies page inner_text.
     State machine: sector header → symbol → name → symbol → ...
+
+    Accepts any line that looks like a sector header (not just predefined ones)
+    so new QSE sectors don't silently drop companies.
     """
     # Start after the filter "Submit" button (avoids the dropdown sector labels)
     start = text.find("Submit\n")
@@ -260,15 +272,32 @@ def _parse_listed_companies(text: str) -> list[dict]:
     for line in lines:
         if line in _SKIP_LINES:
             continue
+
+        # Known sector map first
         if line in _SECTOR_MAP:
             current_sector = _SECTOR_MAP[line]
             pending_symbol = None
             continue
+
+        # Heuristic: any title-case phrase that's not a stock symbol is a sector header.
+        # This future-proofs against QSE adding new sector names.
+        if (not re.match(r'^[A-Z][A-Z0-9]{1,5}$', line) and
+                5 < len(line) < 60 and
+                _SECTOR_HEADER_RE.match(line) and
+                pending_symbol is None):
+            current_sector = line
+            continue
+
         if current_sector is None:
             continue
+
         if pending_symbol:
-            # This line is the company name following a symbol
-            companies.append({"symbol": pending_symbol, "name": line, "sector": current_sector})
+            companies.append({
+                "symbol": pending_symbol,
+                "name": line,
+                "sector": current_sector,
+                "lang": default_lang,
+            })
             pending_symbol = None
         elif re.match(r'^[A-Z][A-Z0-9]{1,5}$', line):
             pending_symbol = line
@@ -279,7 +308,9 @@ def _parse_listed_companies(text: str) -> list[dict]:
 def fetch_listed_companies() -> list[dict]:
     """
     Fetch the current list of companies listed on QSE.
-    Returns [{symbol, name, sector}] — authoritative, live from QSE website.
+    Scrapes the English page for the authoritative symbol+name list.
+    Also scrapes the Arabic page and merges Arabic company names into each entry.
+    Returns [{symbol, name, name_ar, sector}].
     Falls back to empty list on failure (caller should handle).
     """
     with sync_playwright() as p:
@@ -290,15 +321,36 @@ def fetch_listed_companies() -> list[dict]:
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ))
             page = ctx.new_page()
-            print("[qse] Fetching listed companies...", file=sys.stderr)
+
+            # English page — authoritative for symbols
+            print("[qse] Fetching listed companies (EN)...", file=sys.stderr)
             page.goto(QSE_LISTED, wait_until="domcontentloaded", timeout=30_000)
             time.sleep(JS_WAIT)
-            text = page_text(page)
+            en_text = page_text(page)
+            companies = _parse_listed_companies(en_text, default_lang="en")
+            print(f"[qse] {len(companies)} companies from EN page.", file=sys.stderr)
+
+            # Arabic page — provides Arabic company names
+            try:
+                ar_url = "https://www.qe.com.qa/ar/listed-companies"
+                print("[qse] Fetching listed companies (AR)...", file=sys.stderr)
+                page.goto(ar_url, wait_until="domcontentloaded", timeout=30_000)
+                time.sleep(JS_WAIT)
+                ar_text = page_text(page)
+                ar_companies = _parse_listed_companies(ar_text, default_lang="ar")
+                # Build {symbol: arabic_name} lookup
+                ar_names = {c["symbol"]: c["name"] for c in ar_companies}
+                for c in companies:
+                    if c["symbol"] in ar_names:
+                        c["name_ar"] = ar_names[c["symbol"]]
+                print(f"[qse] {len(ar_names)} Arabic names merged.", file=sys.stderr)
+            except Exception as e:
+                print(f"[qse] Arabic page failed (non-fatal): {e}", file=sys.stderr)
+
         finally:
             browser.close()
 
-    companies = _parse_listed_companies(text)
-    print(f"[qse] {len(companies)} listed companies found.", file=sys.stderr)
+    print(f"[qse] {len(companies)} listed companies total.", file=sys.stderr)
     return companies
 
 
