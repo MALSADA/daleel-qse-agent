@@ -97,9 +97,33 @@ def _retrieve_news(symbol: str, name: str) -> list[dict]:
                 hits.append(h)
                 seen.add(h["article_id"])
 
-    # Fetch full text from DB
-    article_ids = [h["article_id"] for h in hits[:MAX_CONTEXT_ARTICLES]]
-    return get_articles_by_ids(article_ids)
+    # Fetch full article data including entity tags
+    candidate_ids = [h["article_id"] for h in hits]
+    candidates = get_articles_by_ids(candidate_ids)
+
+    # Entity-rank: tier by relevance to this specific stock
+    #   Tier 1 — article explicitly tagged to this symbol
+    #   Tier 2 — article has no specific stock entity (general market news)
+    #   Tier 3 — article tagged to a DIFFERENT specific stock (cross-contamination)
+    tier1, tier2, tier3 = [], [], []
+    for art in candidates:
+        entities = json.loads(art.get("entities") or "[]")
+        if symbol in entities:
+            tier1.append(art)
+        elif not entities:
+            tier2.append(art)
+        else:
+            tier3.append(art)  # tagged to another company — lowest priority
+
+    ranked = (tier1 + tier2 + tier3)[:MAX_CONTEXT_ARTICLES]
+
+    if tier3 and len(tier1) + len(tier2) < MAX_CONTEXT_ARTICLES:
+        # Only log when cross-company articles are actually included
+        cross = [a["title"][:60] for a in tier3[:2]]
+        print(f"[analyzer] {symbol}: included {len(tier3)} cross-company articles — {cross}",
+              file=sys.stderr)
+
+    return ranked
 
 
 # ---------------------------------------------------------------------------

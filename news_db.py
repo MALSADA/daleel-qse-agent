@@ -164,7 +164,7 @@ def get_articles_by_ids(ids: list[int]) -> list[dict]:
     placeholders = ",".join("?" * len(ids))
     with get_conn() as conn:
         rows = conn.execute(
-            f"SELECT id, title, body, source, published_at, url FROM articles WHERE id IN ({placeholders})",
+            f"SELECT id, title, body, source, published_at, url, entities FROM articles WHERE id IN ({placeholders})",
             ids,
         ).fetchall()
         return [dict(r) for r in rows]
