@@ -14,6 +14,7 @@ Cron: 0 23 * * * /usr/bin/python3 /home/sadashi/qse-agent/news_pipeline.py >> /h
 import json
 import os
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime
@@ -48,6 +49,12 @@ def setup_logging():
 def log(msg: str):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+
+def _keepalive(stage: str, stop_event: threading.Event, interval: int = 30) -> None:
+    """Writes heartbeat every `interval` seconds so the watchdog doesn't kill a legitimately-running stage."""
+    while not stop_event.wait(interval):
+        write_heartbeat(current_stage=stage)
 
 
 def _check_ollama() -> bool:
@@ -146,12 +153,20 @@ def run_pipeline(symbols=None):
     run_id = start_scrape_run()
     errors = []
 
+    _stop_scrape_hb = threading.Event()
+    _scrape_hb_thread = threading.Thread(
+        target=_keepalive, args=("stage1a_scrape", _stop_scrape_hb), daemon=True
+    )
+    _scrape_hb_thread.start()
     try:
         articles = scrape_all()
     except Exception as e:
         log(f"  ERROR in scraper: {e}")
         articles = []
         errors.append(str(e))
+    finally:
+        _stop_scrape_hb.set()
+        _scrape_hb_thread.join(timeout=5)
 
     scrape_duration = round(time.time() - t0, 1)
     log(f"  Fetched {len(articles)} articles in {scrape_duration}s")
@@ -175,11 +190,19 @@ def run_pipeline(symbols=None):
     log("Embedding new articles into ChromaDB...")
     write_heartbeat(current_stage="stage3_embed")
     t0 = time.time()
+    _stop_embed_hb = threading.Event()
+    _embed_hb_thread = threading.Thread(
+        target=_keepalive, args=("stage3_embed", _stop_embed_hb), daemon=True
+    )
+    _embed_hb_thread.start()
     try:
         embedded = embed_pending()
         log(f"  Embedded {embedded} articles in {round(time.time()-t0,1)}s. Collection size: {collection_count()}")
     except Exception as e:
         log(f"  ERROR in embedder: {e}")
+    finally:
+        _stop_embed_hb.set()
+        _embed_hb_thread.join(timeout=5)
 
     # 5. Analyze (pre-flight: confirm Ollama + model are ready)
     log("Checking Ollama availability...")
