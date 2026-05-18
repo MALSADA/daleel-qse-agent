@@ -1,39 +1,36 @@
-# Muraqib + Daleel — Agent Handover Document
+# QSE Intelligence Platform — Agent Handover Document
 
-**Last updated:** 2026-05-17  
-**Systems:** Muraqib (مراقب) · Daleel (دليل) — QSE Intelligence Platform  
-**Repository remotes:**
-- `origin` → `daleel-qse-agent.git`
-- `igs` → `information-gathering-system.git`  
-
-**Machine:** `sadashi-CELJ10003` — Xeon E-2124G, 31 GB RAM, Quadro P2000 (5 GB VRAM), Ubuntu  
-**Working directory:** `~/qse-agent/`
+**Last updated:** 2026-05-18  
+**Systems:** Muraqib (مراقب) · Daleel (دليل) · HeartBeat (قلب)  
+**Repository:** `https://github.com/MALSADA/daleel-qse-agent.git` (remote: `origin`)  
+**Machine:** `sadashi-CELJ10003` — Xeon E-2124G · 31 GB RAM · Quadro P2000 (5 GB VRAM) · Ubuntu  
+**Working directory:** `~/qse-agent/`  
+**System timezone:** JST (UTC+9) · Qatar market: AST (UTC+3)
 
 ---
 
-## What This Platform Is
+## Current System State (2026-05-18)
 
-Two cooperating sub-systems for Qatar Stock Exchange (QSE) market intelligence:
+All three systems are **live and operational**:
 
-**Muraqib (مراقب — "observer")** — Fully autonomous nightly batch intelligence engine:
-1. Scrapes Arabic and English news from **38 enabled sources** across 5 tiers
-2. Stores deduplicated articles in SQLite with entity tags (which QSE stock each article is about)
-3. Embeds articles using multilingual sentence-transformer → ChromaDB vector store
-4. Analyses each of the **54 officially listed QSE stocks** using RAG + local LLM
-5. Reports results as a dark-theme HTML report delivered to Discord
-6. Feeds recommendations into SOUL.md so Daleel can answer questions about them
+| System | Service | Status | Notes |
+|--------|---------|--------|-------|
+| Daleel | `qse-server.service` | ✅ Running | Flask :7400, qwen2.5:3b |
+| Cloudflare tunnel | `qse-tunnel.service` | ✅ Running | URL in `/tmp/qse_tunnel.log` |
+| HeartBeat | `heartbeat-watchdog.service` | ✅ Running | Monitors all systems |
+| Muraqib | cron (not a service) | ✅ Idle | Last run: 2026-05-18 14:45 JST |
+| Ollama | `ollama.service` | ✅ Running | Both models available |
 
-**Daleel (دليل — "guide")** — Always-on conversational web interface:
-1. Flask web server on port 7400, exposed publicly via Cloudflare tunnel
-2. Users ask natural-language questions about live prices, portfolio, recommendations
-3. Context provided by SOUL.md (written by `qse_update_soul.py` every 2 min during market hours)
-4. Uses `qwen2.5:3b` (fast, fits entirely in 5 GB VRAM)
-
-The two systems are **independent at runtime** — they share SQLite and SOUL.md but neither calls the other. Either can be restarted without affecting the other.
+Quick status check:
+```bash
+systemctl --user status qse-server qse-tunnel heartbeat-watchdog --no-pager
+curl -s http://localhost:7400/health
+curl -s http://localhost:7400/api/gpu
+```
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
                     ┌─────────────────────────────────────┐
@@ -43,37 +40,33 @@ The two systems are **independent at runtime** — they share SQLite and SOUL.md
                     └──────────────┬──────────────────────┘
                                    │ python3 news_pipeline.py
                                    ▼
-         ┌────────────────────────────────────────────────────┐
-         │               news_pipeline.py (orchestrator)      │
-         │  Loads .env · inits DB · runs stages 1a–5          │
-         └──┬──────────┬──────────┬──────────┬───────────────┘
-            │          │          │          │
-            ▼          ▼          ▼          ▼
-       [Stage 1a]  [Stage 1b]  [Stage 1c]  [Stage 1d]
-       Scrape      Listed      Backfill    Prune old
-       38 sources  companies   price hist  articles
-            │      (54 QSE)   (yfinance)  (>90 days)
-            ▼
-       [Stage 2]   news_db.py → SQLite (news.db)
+         ┌──────────────────────────────────────────────────────┐
+         │               news_pipeline.py (orchestrator)        │
+         │  Loads .env · inits DB · writes heartbeat · runs     │
+         │  stages 1a–5                                         │
+         └──┬────────┬────────┬────────┬─────────────────────┬─┘
+            │        │        │        │                     │
+            ▼        ▼        ▼        ▼                     ▼
+       Stage 1a   Stage 1b  Stage 1c  Stage 1d          heartbeat/
+       Scrape     Listed    yfinance  Prune old          __init__.py
+       38 sources companies history   articles           write_heartbeat()
             │
             ▼
-       [Stage 3]   news_embedder.py → ChromaDB (chroma_db/)
+       Stage 3 — news_embedder.py → ChromaDB (chroma_db/)
             │
             ▼
-       [Stage 4]   news_analyzer.py
-            │         → entity-tier + source-tier ranking
-            │         → news_price_history.py (1-yr metrics)
-            │         → qwen2.5:7b (Ollama)
+       Stage 4 — news_analyzer.py (RAG + qwen2.5:7b)
+            │
             ▼
-       [Stage 5]   news_report.py → HTML report → Discord
+       Stage 5 — news_report.py
+            ├── reports/qse-report-YYYY-MM-DD-{pre|post}.html
+            ├── Discord: text digest + HTML attachment (Bot Token)
+            └── SOUL.md injection for Daleel
 
-Separately — qse_update_soul.py (cron):
-       every 2 min during market hours (09:00–13:30 AST)
-       every 4 hours off-hours
-       → live QSE prices (Playwright) + portfolio + recommendations → SOUL.md
-
-Always-on — qse_server.py:
-       Flask :7400 · qwen2.5:3b · reads SOUL.md
+Separately:
+  qse_update_soul.py  → SOUL.md (live prices + portfolio + recommendations)
+  qse_server.py       → Flask :7400 (chat + portfolio + reports + GPU indicator)
+  heartbeat/heartbeat.py → daemon: monitors Muraqib + Daleel + tunnel + Ollama
 ```
 
 ---
@@ -82,19 +75,19 @@ Always-on — qse_server.py:
 
 | File | Purpose |
 |------|---------|
-| `news_pipeline.py` | **Muraqib entry point.** Orchestrates all stages. Sends Discord crash alert on failure. |
-| `news_scraper.py` | Scrapes all sources in `news_sources.json`. RSS-first, HTML fallback. Includes `QSE_ALIASES` (Arabic+English aliases for all 54 stocks). |
-| `news_sources.json` | **Source registry.** Add/remove/disable sources here without touching code. |
-| `news_db.py` | SQLite schema + all CRUD. Articles, recommendations, scrape_runs, price_history tables. |
-| `news_embedder.py` | Embeds articles with `multilingual-e5-base` → ChromaDB. Thread-safe singleton. |
-| `news_analyzer.py` | RAG retrieval + entity-tier filtering + source-tier ranking + LLM call + response parsing. |
-| `news_price_history.py` | yfinance backfill (1 year, `.QA` suffix) + per-stock metric computation for LLM prompts. |
-| `news_report.py` | Generates dark-theme HTML report, sends to Discord via Bot Token REST API. |
-| `qse_scraper.py` | Playwright scraper for live QSE prices (Angular SPA). Also scrapes listed companies page. |
-| `qse_update_soul.py` | **Daleel context writer.** Writes SOUL.md with live prices + portfolio + Muraqib recommendations. |
-| `qse_server.py` | **Daleel web server.** Flask :7400, `qwen2.5:3b`, reads SOUL.md as system prompt. |
-| `qse_chat.py` | CLI for interactive QSE queries (`qse` alias). |
-| `qse_portfolio.py` | Portfolio tracking and price alerts. |
+| `news_pipeline.py` | **Muraqib entry point.** Writes heartbeat at every stage. Sends Discord crash alert on failure. |
+| `news_scraper.py` | Scrapes all sources in `news_sources.json`. RSS-first, HTML fallback. Contains `QSE_ALIASES` for all 54 QSE stocks. |
+| `news_sources.json` | Source registry — add/remove/disable sources without code changes. |
+| `news_db.py` | SQLite schema + CRUD (articles, recommendations, price_history, scrape_runs). |
+| `news_embedder.py` | `multilingual-e5-base` → ChromaDB. CPU-only (Ollama owns GPU). Thread-safe singleton. |
+| `news_analyzer.py` | Entity-tier filtering + source-tier ranking + `qwen2.5:7b` + JSON parsing. Writes heartbeat per stock. |
+| `news_price_history.py` | yfinance 1-year backfill + MA10/MA30/52w high-low metrics. 120s timeout wrapper. |
+| `news_report.py` | Dark-theme HTML report. Named `qse-report-YYYY-MM-DD-pre.html` or `…-post.html` based on AST hour. Discord attachment via Bot Token REST API. |
+| `qse_scraper.py` | Playwright live QSE price scraper (Angular SPA, 7s JS wait). |
+| `qse_update_soul.py` | Writes SOUL.md — live prices + portfolio + Muraqib recommendations. |
+| `qse_server.py` | **Daleel web server.** Flask :7400. Tabs: Chat · Portfolio · Reports · Notes. GPU dot. |
+| `heartbeat/__init__.py` | `write_heartbeat()` / `clear_heartbeat()` shared by pipeline stages. |
+| `heartbeat/heartbeat.py` | HeartBeat daemon — Muraqib stall detection, Daleel/tunnel health, Discord polling. |
 
 ### Data Paths
 
@@ -102,243 +95,204 @@ Always-on — qse_server.py:
 |------|---------|
 | `~/qse-agent/news.db` | SQLite — articles, recommendations, price_history, scrape_runs |
 | `~/qse-agent/chroma_db/` | ChromaDB vector store (collection: `qse_news`, cosine similarity) |
-| `~/qse-agent/reports/` | Generated HTML reports (`qse-report-YYYY-MM-DD.html`) |
-| `~/qse-agent/logs/` | Pipeline log files |
-| `~/qse-agent/news_sources.json` | News source configuration (38 enabled of 42 total) |
+| `~/qse-agent/reports/` | HTML reports (`qse-report-YYYY-MM-DD-{pre\|post}.html`) |
+| `~/qse-agent/logs/pipeline.log` | Muraqib pipeline log |
+| `~/qse-agent/heartbeat/logs/heartbeat.log` | HeartBeat daemon log |
+| `~/qse-agent/heartbeat/muraqib_heartbeat.json` | Live pipeline state |
+| `~/.openclaw/workspace-qatar-stocks/SOUL.md` | Daleel system prompt |
+| `~/.openclaw/workspace-qatar-stocks/portfolio.json` | Portfolio holdings |
+| `/tmp/qse_tunnel.log` | Cloudflare tunnel log (contains current URL) |
 | `~/qse-agent/.env` | Secrets: `DISCORD_BOT_TOKEN`, `DISCORD_WEBHOOK`, `GIST_GITHUB_TOKEN` |
-| `~/.openclaw/workspace-qatar-stocks/SOUL.md` | Daleel system prompt (live prices + recommendations) |
 
 ---
 
 ## Cron Schedule
 
-System timezone: **Asia/Tokyo (JST = UTC+9)**  
-Qatar market timezone: **AST = UTC+3**
-
 ```
-*/2  15-19  * * 0-4   qse_update_soul.py    # Every 2 min, market hours (09:00-13:30 AST = 15-19 JST, Sun–Thu)
+*/2  15-19  * * 0-4   qse_update_soul.py    # Every 2 min, market hours (09:00-13:30 AST)
 0    */4    * * *      qse_update_soul.py    # Every 4 hours off-hours
-45   14     * * 0-4   news_pipeline.py      # Pre-market 08:45 AST = 14:45 JST, Sun–Thu
+45   14     * * 0-4   news_pipeline.py      # Pre-market  08:45 AST = 14:45 JST, Sun–Thu
 0    20     * * *      news_pipeline.py      # Post-market 14:00 AST = 20:00 JST, daily
-0    2      * * 0      logrotate             # Log rotation, weekly Sunday 02:00 JST
+0    2      * * 0      logrotate             # Weekly log rotation
 ```
 
 ---
 
-## News Sources
+## Daleel Web Interface — Full Feature List
 
-Sources are configured entirely in `news_sources.json`. **38 sources enabled** of 42 total.
+**Chat:** Natural-language QSE queries using SOUL.md context. Portfolio management via LLM command tags: `[PORTFOLIO:ADD ...]`, `[PORTFOLIO:SELL ...]`, `[PORTFOLIO:TARGET ...]`.
 
-| Tier | Focus | Count | Key Sources |
-|------|-------|-------|-------------|
-| 1 | Direct QSE movers | 6 | QSE Official, QNA (EN+AR), QatarEnergy, QCB, MoF Qatar |
-| 2 | Qatar national press | 10 | Peninsula, Gulf Times, Lusail, Doha News, Al Sharq, Al Raya, Qatar TV, Al Watan, Google News (EN+AR) |
-| 3 | GCC / regional | 7 | Al Jazeera (EN+AR), Arab News, Zawya, Asharq Business, MEED, Saudi Gazette |
-| 4 | Global macro | 6 | Reuters (via GNews), Bloomberg, CNBC, FT, Investing.com, OilPrice |
-| 5 | Energy / specialized | 9 | OPEC, IMF, World Bank, Fed Reserve, Maritime Executive, Hellenic Shipping, MarketWatch, Yahoo Finance, BBC World |
+**Portfolio tab:** Live P&L with Group Securities commission (0.0275%). Projection calculator.
 
-**Disabled** (require action to enable):
-- `tradingeconomics` — needs `TRADING_ECONOMICS_KEY` in `.env`
-- `nytimes_world` — paywall; `fetch_body` must stay false
-- `techcrunch` / `theverge` — low QSE relevance
+**Reports tab:** Embeds Muraqib HTML reports inline via iframes. Both daily sessions (pre/post) shown as collapsible cards. Latest post-market auto-expanded. Download button on each card.
 
----
+**Notes tab:** Persistent notes injected into every chat context.
 
-## RAG Pipeline — How It Works
+**GPU dot (header):**
+- 🟢 Green = `qwen2.5:3b` loaded in VRAM (Daleel warm)
+- 🔴 Red = `qwen2.5:7b` in VRAM (Muraqib running)
+- 🟡 Yellow = GPU idle (model loads on first message)
+- Updates every 15 seconds via `/api/gpu`
 
-### Stage 1a — Scraping
-- RSS-first per source; HTML fallback if RSS yields 0 articles
-- Per-article: language detection (Arabic Unicode ratio), category classification (keyword match), entity extraction (QSE ticker symbols + company aliases from `QSE_ALIASES`)
-- Deduplication: `url_hash` (SHA-256[:16] of URL) + `content_hash` (SHA-256[:16] of title+body)
-- Arabic alias injection: `update_aliases_from_listed_companies()` merges Arabic names from official QSE page into `QSE_ALIASES` at runtime
-
-### Stage 1b — Listed Companies
-- Fetches official QSE listed-companies page via Playwright on every run
-- Extracts the **54 currently listed companies** (no ETFs) as the canonical symbol list
-- Heuristic sector detector handles page layout changes where sector headings are not in the known `_SECTOR_MAP`
-
-### Stage 1c — Price History Backfill
-- `yfinance.download()` with `.QA` suffix in batch for all 54 symbols
-- `INSERT OR IGNORE` — safe to run repeatedly; only fills missing dates
-- First run fills ~250 trading days; incremental on subsequent runs
-
-**Dual-writer note:** `qse_update_soul.py` also writes to `price_history` via `save_price_snapshot()` using `INSERT OR REPLACE`, so the last scrape of the day (market close) overwrites earlier snapshots. yfinance historical data is never overwritten by live snapshots.
-
-### Stage 1d — Retention Cleanup
-- Deletes articles older than 90 days from SQLite + corresponding ChromaDB embeddings
-
-### Stage 3 — Embedding
-- Model: `intfloat/multilingual-e5-base` (278M params, 768-dim, 512-token context)
-- Prefix: `"passage: "` for indexed docs; `"query: "` for retrieval queries
-- Device: **CPU** (Ollama owns the GPU for LLM inference)
-
-### Stage 4 — Analysis
-For each of the 54 stocks:
-1. ChromaDB semantic search (top 12 results) + Arabic alias search
-2. **Entity-tier filtering:**
-   - Tier 1 (symbol explicitly tagged): always kept
-   - Tier 2 (no entity tags — general market news): kept as filler
-   - Tier 3 (tagged to a *different* company): **discarded entirely** — prevents cross-company contamination (e.g. QGMD article in MEZA analysis)
-3. **Source-tier ranking:** within each entity tier, articles sorted by source tier ASC (Tier 1=best). Tier 4–5 articles capped at 2 of 6 slots.
-4. Top 6 articles sent to LLM with: live prices, 10-day price history, 1-year price metrics
-5. `qwen2.5:7b` via Ollama, JSON mode enforced, temperature 0.1
-6. Parallel: `ThreadPoolExecutor(max_workers=2)` — overlaps RAG with LLM inference
-
-### Stage 5 — Report
-- Dark-theme HTML saved to `reports/qse-report-YYYY-MM-DD.html`
-- Delivered to Discord via Bot Token REST API (file attachment)
+**Key implementation details:**
+- `get_busy_model()` checks `heartbeat/muraqib_heartbeat.json` first — only blocks chat if `pipeline_running=true`. Prevents false positives from the 7b model being warm in VRAM after a run.
+- `/api/gpu` and `/health` are unauthenticated; all other `/api/*` routes require session cookie.
+- Flask dev server (threaded). Each open browser tab holds an SSE thread for `/api/alerts/stream`. Thread count grows with uptime — restart periodically if sluggish.
 
 ---
 
-## Technology Stack
+## HeartBeat Watchdog — What It Does
 
-| Layer | Technology | Notes |
-|-------|-----------|-------|
-| Scraping | `requests` + `feedparser` + `BeautifulSoup/lxml` | RSS-first; HTML fallback |
-| QSE price scraping | `playwright` (Chromium at `~/.openclaw/browsers/`) | Angular SPA; 7s render wait |
-| Price history | `yfinance` | `.QA` ticker suffix; 1-year backfill |
-| Embeddings | `sentence-transformers` (`multilingual-e5-base`) | 512-token, 768-dim, CPU, Arabic+English |
-| Vector store | `ChromaDB` (persistent local) | `~/qse-agent/chroma_db/`, cosine similarity |
-| Relational DB | `SQLite` WAL | `~/qse-agent/news.db` |
-| LLM (Muraqib) | `qwen2.5:7b` via Ollama `:11434` | JSON mode, 8192 ctx, temperature 0.1 |
-| LLM (Daleel) | `qwen2.5:3b` via Ollama `:11434` | Fits fully in 5 GB VRAM |
-| Notifications | Discord REST API v10 (Bot Token) | Channel ID: `1503771223358832710` |
-| Crash alerts | Discord Webhook | Uses `DISCORD_WEBHOOK` from `.env` |
-| Web interface | Flask `:7400` + Cloudflare tunnel | Daleel public access |
-| Scheduling | `cron` | JST timezone |
-| Log rotation | `logrotate` | Weekly, 12-week retention |
+Runs as `heartbeat-watchdog.service`. Main loop: 15s tick, monitor checks every 60s, Discord poll every 30s.
+
+**Muraqib checks:**
+1. Read `heartbeat/muraqib_heartbeat.json`
+2. If `pipeline_running=true`: verify PID alive with `os.kill(pid, 0)`
+3. Check `last_heartbeat_utc` age — if >600s: HUNG → SIGTERM → SIGKILL → restart
+4. Stall threshold 600s (10 min) is 5× any legitimate single operation
+
+**Daleel checks:**
+1. `GET localhost:7400/health` — if non-200: restart via `systemctl --user restart qse-server`
+2. `GET {tunnel_url}/health` — if 429: rate-limit alert + restart; if tunnel error: dead tunnel alert
+3. SOUL.md age from health response — if >7200s during market hours: stale alert
+
+**Discord commands:**
+- `!status` → full platform status (Daleel · Muraqib · Ollama · HeartBeat uptime)
+- `!report` → sends latest `reports/qse-report-*.html` as Discord file attachment
+
+**Alert deduplication:** 30-min cooldown per key, stored in `alert_cooldown.json`.
+
+---
+
+## Remote Access
+
+```bash
+# Current tunnel URL
+grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/qse_tunnel.log | tail -1
+
+# GitHub Gist (stores current URL as JSON)
+# Gist ID: 723f7ea98c33725338a6003bd14765c4
+
+# User-facing link: alsada.io/dlnk (Squarespace button fetches Gist)
+# Fallback: malsada.github.io/go
+
+# Restart tunnel (generates new random URL, updates Gist automatically)
+systemctl --user restart qse-tunnel
+```
+
+---
+
+## Operations Runbook
+
+### Restart everything after a reboot
+```bash
+systemctl --user start qse-server qse-tunnel heartbeat-watchdog
+# Ollama: sudo systemctl start ollama
+```
+
+### Run Muraqib manually
+```bash
+# Full run (background)
+nohup python3 ~/qse-agent/news_pipeline.py >> ~/qse-agent/logs/pipeline.log 2>&1 &
+
+# Quick test (2 stocks, ~5 min)
+python3 ~/qse-agent/news_pipeline.py --symbols QNBK ORDS
+
+# Watch progress
+tail -f ~/qse-agent/logs/pipeline.log
+```
+
+### Daleel is not reachable externally
+```bash
+# 1. Check if it's a tunnel issue (most common)
+curl -sv https://$(grep -o '[a-z0-9-]*\.trycloudflare\.com' /tmp/qse_tunnel.log | tail -1)/health 2>&1 | grep "< HTTP"
+# If 429 or 1033: restart tunnel
+systemctl --user restart qse-tunnel
+
+# 2. Check Flask thread count (if >100, restart)
+cat /proc/$(pgrep -f qse_server.py | head -1)/status | grep Threads
+systemctl --user restart qse-server
+
+# 3. Check Ollama is running (Daleel needs it to start)
+curl -s http://localhost:11434/api/tags | python3 -m json.tool
+```
+
+### Muraqib hung / not completing
+```bash
+# Check heartbeat
+cat ~/qse-agent/heartbeat/muraqib_heartbeat.json
+
+# Kill and restart
+pkill -f news_pipeline.py
+python3 ~/qse-agent/news_pipeline.py &
+
+# HeartBeat auto-detects hangs and restarts within 10 min
+```
+
+### SOUL.md is stale (Daleel giving old prices)
+```bash
+python3 ~/qse-agent/qse_update_soul.py
+# Should complete in <60s (Playwright QSE scrape)
+# Check: stat ~/.openclaw/workspace-qatar-stocks/SOUL.md
+```
+
+### Quick database diagnostics
+```bash
+# Article count
+sqlite3 ~/qse-agent/news.db "SELECT count(*) FROM articles;"
+
+# Today's recommendations
+sqlite3 ~/qse-agent/news.db \
+  "SELECT stock_symbol, recommendation, sentiment_score FROM recommendations \
+   WHERE run_date=date('now') ORDER BY recommendation, sentiment_score DESC;"
+
+# Last scrape run
+sqlite3 ~/qse-agent/news.db \
+  "SELECT started_at, total_articles, new_articles FROM scrape_runs \
+   ORDER BY id DESC LIMIT 1;"
+```
+
+---
+
+## Known Issues (2026-05-18)
+
+### Active
+
+| Issue | Severity | Detail | Fix |
+|-------|----------|--------|-----|
+| Cloudflare free tunnel rate limit | Medium | Free trycloudflare.com tunnels can hit request cap (HTTP 429) if browser tab left open (GPU dot polls every 15s, status every 60s). HeartBeat now detects and alerts. | Restart tunnel: `systemctl --user restart qse-tunnel`. Long-term: use named Cloudflare tunnel (requires account). |
+| Flask thread accumulation | Low | Dev server creates a thread per SSE connection. After days of uptime with multiple browsers, thread count can reach 200+. No crash — server just becomes slower. | `systemctl --user restart qse-server` clears threads. |
+| QNA RSS 404 | Medium | `qna.org.qa` changed its RSS URL structure. | Visit `qna.org.qa/en/RSS-Feeds`, update `news_sources.json`. |
+| Al Jazeera Arabic DNS failure | Low | `arabic.aljazeera.net` may be geo-blocked from this IP. | Test with `curl -v`; consider DNS override or disable. |
+| GitHub Gist token exposed | High | A `GIST_GITHUB_TOKEN` was exposed in chat history (now revoked). | **ACTION REQUIRED:** Generate a new token at github.com/settings/tokens and update `.env`. |
+
+### Resolved (this session, 2026-05-17–18)
+
+| Issue | Resolution |
+|-------|-----------|
+| Heartbeat only checked localhost — missed tunnel failures | Added tunnel URL check to `check_daleel()` with 429/dead-tunnel alerts |
+| `get_busy_model()` false positives (7b warm in VRAM after run) | Now reads heartbeat file first; only blocks if `pipeline_running=true` |
+| No `!report` Discord command | Added `_REPORT_TRIGGERS` + `_send_report_attachment()` to HeartBeat |
+| No Reports tab in Daleel | Built `/api/reports`, `/api/reports/<filename>` endpoints + full tab UI with collapsible iframes and download buttons |
+| Pre/post-market reports overwrote each other | `news_report.py` now names files `…-pre.html` / `…-post.html` based on AST hour |
+| GPU dot polled every 3s (contributed to tunnel 429) | Reduced to 15s |
+| Discord crash alert used wrong credential | `send_discord_alert()` now uses `DISCORD_WEBHOOK` (was trying `BOT_TOKEN`) |
+| No hang detection for Muraqib | HeartBeat daemon implemented with 600s stall threshold + auto-restart |
+| yfinance no timeout | Wrapped in `ThreadPoolExecutor` with 120s timeout |
+| `/health` endpoint missing (blocked Daleel watchdog) | Added to `qse_server.py` |
+| Cross-company RAG contamination | Entity-tier Tier 3 (different company) discarded entirely |
+| Source-tier ranking not enforced | Tier 4–5 articles now capped at 2/6 RAG slots |
 
 ---
 
 ## GPU Notes
 
-- **Quadro P2000** — 5 GB VRAM, Pascal arch (sm_61)
-- `qwen2.5:3b` (Daleel) fits fully in VRAM → ~4s responses
-- `qwen2.5:7b` (Muraqib) partially offloads to CPU RAM → ~33–39s per stock; full run ~30–75 min
-- Muraqib forces embedder to **CPU** so Ollama has exclusive GPU access during analysis
-- When Muraqib is running, Daleel's chat returns a busy notice (detected via Ollama `/api/ps`)
-
----
-
-## Failure Handling
-
-| Failure | Effect | Mitigation |
-|---------|--------|-----------|
-| RSS feed down | 0 articles from that source | HTML fallback activates automatically |
-| Ollama not running | Analysis stage skipped | Pre-flight check; Discord alert sent |
-| Ollama timeout per stock | That stock skipped | 120s timeout; pipeline continues |
-| ChromaDB write fail | Articles stay `embedded=0` | Retried next run (idempotent upsert) |
-| Discord API error | No notification | Report saved locally; error logged |
-| QSE scraper fails | No live prices in prompts | Analyzer logs warning; uses historical metrics only |
-| Full pipeline crash | Nothing delivered | Top-level try/except sends crash traceback to Discord |
-| yfinance failure | No new history rows | Non-fatal; analysis uses existing history |
-| Muraqib hangs | Silent stall (no crash alert) | See `WATCHDOG_PROPOSAL.md` for heartbeat + watchdog |
-
----
-
-## Quick Diagnostics
-
-```bash
-# Tail the last pipeline run
-tail -100 ~/qse-agent/logs/pipeline.log
-
-# How many articles in the DB?
-sqlite3 ~/qse-agent/news.db "SELECT count(*) FROM articles;"
-
-# Today's recommendations summary
-sqlite3 ~/qse-agent/news.db \
-  "SELECT stock_symbol, recommendation, sentiment_score FROM recommendations \
-   WHERE run_date=date('now') ORDER BY recommendation, sentiment_score DESC;"
-
-# Last scrape run stats
-sqlite3 ~/qse-agent/news.db \
-  "SELECT started_at, completed_at, total_articles, new_articles FROM scrape_runs \
-   ORDER BY id DESC LIMIT 1;"
-
-# Is Ollama running and which models are loaded?
-curl -s http://localhost:11434/api/tags | python3 -c \
-  "import sys,json; print([m['name'] for m in json.load(sys.stdin)['models']])"
-
-# GPU state
-nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.free --format=csv,noheader
-
-# Is Daleel responding?
-curl -s http://localhost:7400/health || echo "Daleel not responding"
-
-# How stale is SOUL.md?
-python3 -c "import os,time; st=os.stat('$HOME/.openclaw/workspace-qatar-stocks/SOUL.md'); \
-  print(f'SOUL.md last updated {(time.time()-st.st_mtime)/60:.1f} min ago')"
-
-# Run the full Muraqib pipeline manually
-python3 ~/qse-agent/news_pipeline.py
-
-# Run analysis for specific stocks only (faster for testing)
-python3 ~/qse-agent/news_pipeline.py --symbols QNBK ORDS MARK
-
-# Regenerate and resend today's report without re-scraping
-python3 ~/qse-agent/news_report.py
-
-# Test the scraper alone
-python3 ~/qse-agent/news_scraper.py
-```
-
----
-
-## How to Start / Stop Each System
-
-### Muraqib
-```bash
-# Manual run (foreground — see all output)
-python3 ~/qse-agent/news_pipeline.py
-
-# Cron is already configured — runs automatically per schedule
-# To check cron status:
-crontab -l
-```
-
-### Daleel web server
-```bash
-# Check if running
-systemctl status daleel   # or: pgrep -a -f qse_server.py
-
-# Restart
-sudo systemctl restart daleel   # if configured as systemd service
-# OR:
-pkill -f qse_server.py && python3 ~/qse-agent/qse_server.py &
-
-# Check Cloudflare tunnel
-systemctl status cloudflared
-```
-
-### SOUL.md updater
-```bash
-# Manual update
-python3 ~/qse-agent/qse_update_soul.py
-
-# Runs automatically via cron — see schedule above
-```
-
----
-
-## Known Issues (as of 2026-05-17)
-
-| Issue | Severity | Detail | Resolution path |
-|-------|----------|--------|----------------|
-| QNA RSS 404 | Medium | `qna.org.qa` changed its RSS URL structure | Visit `qna.org.qa/en/RSS-Feeds`; update `news_sources.json` |
-| Al Jazeera Arabic DNS failure | Low | `arabic.aljazeera.net` may be geo-blocked | Test with `curl -v`; consider DNS override |
-| Qatar TV / Al Watan low yield | Low | RSS URLs unverified; HTML fallback gets headlines only | Manually inspect live pages for working feed paths |
-| yfinance no timeout | Medium | `yf.download()` blocks indefinitely on network failure; can hang Stage 1c | Wrap in `concurrent.futures` with timeout; see `WATCHDOG_PROPOSAL.md` |
-| Discord crash alert uses wrong credential | Medium | `send_discord_alert()` uses `DISCORD_BOT_TOKEN` but `.env` only sets `DISCORD_WEBHOOK` | Switch alert function to use webhook URL (simple POST, no auth header needed) |
-| No hang detection for Muraqib | Medium | If pipeline hangs inside yfinance, ChromaDB, or Playwright, no alert is sent | Implement heartbeat + watchdog per `WATCHDOG_PROPOSAL.md` |
-| No sector-level analysis | Low | Each stock analysed in isolation | Future: group by QSE sector for broader macro context |
-| No backtesting | Low | Recommendations not validated against actual price moves | Future: compare `price_prediction_pct` against next-day actual change |
-
-**Items resolved this session (2026-05-17):**
-- ~~Cross-company contamination (e.g. QGMD news in MEZA analysis)~~ — Fixed: Tier 3 articles discarded entirely
-- ~~Entity extraction false positives (GIS matching GISS)~~ — Fixed: word-boundary requirement for short abbreviations
-- ~~Price snapshot storing opening price not closing~~ — Fixed: `INSERT OR REPLACE` in `save_price_snapshot()`
-- ~~Source-tier ranking decorative only~~ — Fixed: articles now sorted by source tier within entity tiers; Tier 4–5 capped
-- ~~QSE_ALIASES incomplete for Arabic aliases~~ — Fixed: all 54 stocks now have Arabic names in `QSE_ALIASES`; runtime injection from official listed-companies page
+- **Quadro P2000** — 5 GB VRAM, Pascal (sm_61)
+- `qwen2.5:3b`: fully in VRAM → ~4s chat responses
+- `qwen2.5:7b`: partial offload → ~33–39s per stock; full 54-stock run 30–75 min
+- Ollama keeps models warm in VRAM for ~5 min after last use (keepalive cache)
+- After Muraqib completes, 7b stays warm briefly — Daleel correctly ignores this now
+- To evict a model immediately: `curl -X POST localhost:11434/api/generate -d '{"model":"qwen2.5:7b","keep_alive":0}'`
 
 ---
 
@@ -346,28 +300,36 @@ python3 ~/qse-agent/qse_update_soul.py
 
 | Date | Decision | Reason |
 |------|----------|--------|
-| 2026-05-15 | Abandoned OpenClaw framework | LLM forced to fetch browser data → 120s Gemini timeout; hallucinations with 3B models |
-| 2026-05-15 | Built standalone Playwright scraper + Ollama pipeline | Separating scraping and inference eliminates timeouts and hallucinations |
-| 2026-05-16 | Built Muraqib news RAG pipeline | Add market intelligence beyond live price data |
-| 2026-05-16 | Switched embedder to multilingual-e5-base | MiniLM had 128-token limit; silently truncated article bodies |
-| 2026-05-17 | Added 1-year price history via yfinance | Gives LLM 52-week context and MA10/MA30 signals |
+| 2026-05-15 | Abandoned OpenClaw | LLM forced to fetch browser data → 120s timeout / hallucinations |
+| 2026-05-15 | Standalone Playwright + Ollama pipeline | Separating scraping from inference eliminates timeouts |
+| 2026-05-16 | Built Muraqib RAG pipeline | Market intelligence beyond live prices |
+| 2026-05-16 | `multilingual-e5-base` embedder | MiniLM had 128-token limit, silently truncated articles |
 | 2026-05-17 | Entity-tier RAG filtering | Prevented cross-company contamination |
-| 2026-05-17 | Source-tier-aware article ranking | Qatar-specific sources ranked above global macro within entity tiers |
-| 2026-05-17 | Scrape official QSE listed-companies page | Canonical count is 54 (removed ETFs and phantom symbols) |
-| 2026-05-17 | One recommendation per stock per day (DELETE+INSERT) | Pipeline runs multiple times per day; prevents duplicate rows |
-| 2026-05-17 | Live price snapshot uses INSERT OR REPLACE | Last-of-day scrape gives closing price, not opening price |
-| 2026-05-17 | Injected recommendations into SOUL.md | Enables Daleel to answer BUY/SELL/HOLD queries |
-| 2026-05-17 | Named the system Muraqib (مراقب) | "Observer/watcher" — reflects the system's monitoring role |
+| 2026-05-17 | Source-tier article ranking | Qatar-specific sources outrank global macro within entity tiers |
+| 2026-05-17 | Official QSE listed-companies scrape | Canonical count is 54 (removed ETFs) |
+| 2026-05-17 | `DELETE+INSERT` for recommendations | Idempotent across multiple daily runs |
+| 2026-05-17 | Recommendations injected into SOUL.md | Daleel can answer BUY/SELL/HOLD queries |
+| 2026-05-17 | HeartBeat daemon built | Muraqib could hang silently with no alert |
+| 2026-05-17 | Named Muraqib (مراقب), HeartBeat (قلب) | Consistent Arabic naming convention for platform |
+| 2026-05-18 | Reports tab in Daleel | Inline report viewing without Discord |
+| 2026-05-18 | pre/post report naming | Both daily runs now preserved (previously post overwrote pre) |
+| 2026-05-18 | Tunnel health check in HeartBeat | Detected today's Cloudflare 429 outage that localhost check missed |
+| 2026-05-18 | GPU dot poll reduced 3s → 15s | Was contributing to Cloudflare tunnel rate limiting |
 
 ---
 
 ## Suggested Next Steps
 
-1. **Fix QNA RSS** — visit `qna.org.qa/en/RSS-Feeds`, update paths in `news_sources.json`
-2. **Fix Discord crash alert** — change `send_discord_alert()` to use `DISCORD_WEBHOOK` env var (simple POST, no Bot Token needed)
-3. **Implement watchdog + heartbeat** — see `WATCHDOG_PROPOSAL.md` for the full spec; prevents silent hangs going undetected
-4. **Add yfinance timeout** — wrap `yf.download()` in a `ThreadPoolExecutor` with a 120s timeout to match the Ollama timeout
-5. **Add `/reports` route** in `qse_server.py` — serve HTML reports through the Daleel web UI
-6. **Sector-level analysis** — group stocks by QSE sector before RAG retrieval for broader macro context
-7. **Backtesting** — compare `price_prediction_pct` against actual next-day price change to calibrate the model
-8. **Prune unused Ollama models** — `llama3.1`, `llama3.1-fast`, `llama3.2-fast`, `llama3`, `gemma2`, `gemma3:4b` total ~22 GB unused disk
+1. **Revoke exposed GitHub token** — The `GIST_GITHUB_TOKEN` from `.env` was exposed in chat history and must be revoked at github.com/settings/tokens; generate a replacement and update `.env`
+2. **Named Cloudflare tunnel** — replace free trycloudflare.com with a persistent named tunnel (requires free Cloudflare account). Eliminates URL changes on restart and avoids rate limits.
+3. **Switch Flask to Gunicorn** — `gunicorn -w 1 -k gevent qse_server:app` handles SSE correctly without thread-per-connection accumulation
+4. **Fix QNA RSS** — visit `qna.org.qa/en/RSS-Feeds`, update `news_sources.json`
+5. **Backtesting** — compare `price_prediction_pct` against next-day actual price change
+6. **Sector-level analysis** — group stocks by QSE sector for macro context
+7. **Benchmark models** — run `benchmark_models.py` to validate qwen2.5:7b vs alternatives
+
+---
+
+## Disclaimer
+
+For informational and research purposes only. Not financial advice.

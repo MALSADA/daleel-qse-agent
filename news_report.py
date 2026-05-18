@@ -30,8 +30,11 @@ _DIR_ARROW  = {"UP": "▲", "DOWN": "▼", "NEUTRAL": "→"}
 
 def generate_html(recommendations: list[dict], scrape_stats: dict) -> Path:
     REPORTS_DIR.mkdir(exist_ok=True)
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    path = REPORTS_DIR / f"qse-report-{date_str}.html"
+    now = datetime.utcnow()
+    date_str = (now + __import__("datetime").timedelta(hours=3)).strftime("%Y-%m-%d")
+    ast_hour  = (now.hour + 3) % 24
+    session   = "pre" if ast_hour < 12 else "post"
+    path = REPORTS_DIR / f"qse-report-{date_str}-{session}.html"
 
     buys  = [r for r in recommendations if r["recommendation"] == "BUY"]
     sells = [r for r in recommendations if r["recommendation"] == "SELL"]

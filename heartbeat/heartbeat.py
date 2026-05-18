@@ -282,7 +282,7 @@ def build_status_report() -> str:
     )
 
 # ---------------------------------------------------------------------------
-# Discord polling for !status command
+# Discord polling for !status and !report commands
 # ---------------------------------------------------------------------------
 
 _STATUS_TRIGGERS = {
@@ -291,8 +291,51 @@ _STATUS_TRIGGERS = {
     "are you online?", "system status",
 }
 
+_REPORT_TRIGGERS = {
+    "!report", "report", "daily report", "send report",
+    "show report", "get report", "send me the report",
+    "show me the report", "muraqib report",
+}
+
+REPORTS_DIR = BASE_DIR / "reports"
+
+
+def _send_report_attachment() -> bool:
+    """Find the latest HTML report and send it to Discord as a file attachment."""
+    reports = sorted(REPORTS_DIR.glob("qse-report-*.html"))
+    if not reports:
+        _channel_send("⚠️ No report files found in `reports/` — has Muraqib run yet today?")
+        return False
+
+    report_path = reports[-1]
+    date_str = report_path.stem.replace("qse-report-", "")
+    caption = f"📊 **Muraqib Daily Report — {date_str}**\nHere is the latest QSE analysis report."
+
+    if not DISCORD_BOT_TOKEN:
+        log("Report send: no DISCORD_BOT_TOKEN — cannot upload attachment")
+        _channel_send("⚠️ Bot token not configured — cannot send file attachment.")
+        return False
+
+    try:
+        with open(report_path, "rb") as fh:
+            r = requests.post(
+                f"{DISCORD_API}/channels/{DISCORD_CHANNEL_ID}/messages",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                data={"payload_json": json.dumps({"content": caption})},
+                files={"files[0]": (report_path.name, fh, "text/html")},
+                timeout=60,
+            )
+        r.raise_for_status()
+        log(f"Report sent: {report_path.name}")
+        return True
+    except Exception as e:
+        log(f"Report send failed: {e}")
+        _channel_send(f"⚠️ Failed to send report: `{e}`")
+        return False
+
+
 def poll_discord():
-    """Check Discord channel for !status queries and respond."""
+    """Check Discord channel for !status and !report queries and respond."""
     if not DISCORD_BOT_TOKEN:
         return
 
@@ -335,11 +378,17 @@ def poll_discord():
         if msg.get("author", {}).get("bot"):
             continue
         content = msg.get("content", "").strip().lower()
+        author = msg.get("author", {}).get("username", "?")
+
         if content in _STATUS_TRIGGERS or "!status" in content:
-            author = msg.get("author", {}).get("username", "?")
             log(f"Discord: status query from {author}: {msg.get('content','')[:60]}")
             _channel_send(build_status_report())
-            break  # respond once even if multiple status messages arrived
+            break
+
+        if content in _REPORT_TRIGGERS or "!report" in content:
+            log(f"Discord: report request from {author}: {msg.get('content','')[:60]}")
+            _send_report_attachment()
+            break
 
 # ---------------------------------------------------------------------------
 # Process management
@@ -455,7 +504,19 @@ def check_muraqib():
         log(f"Muraqib: OK — PID {pid}, {stage}{sym_str}, {done}/{total}, hb {age_s:.0f}s ago")
 
 
+def _get_tunnel_url() -> str | None:
+    """Read current Cloudflare tunnel URL from the tunnel log."""
+    import re as _re
+    try:
+        text = Path("/tmp/qse_tunnel.log").read_text()
+        m = _re.findall(r'https://[a-z0-9-]+\.trycloudflare\.com', text)
+        return m[-1] if m else None
+    except Exception:
+        return None
+
+
 def check_daleel():
+    # 1. Local Flask health check
     try:
         r = requests.get("http://localhost:7400/health", timeout=10)
         ok = r.status_code == 200
@@ -469,6 +530,36 @@ def check_daleel():
         send_alert("⚠️ **Daleel is down** — restarting qse-server...", key="daleel_down")
         _restart_daleel()
         return
+
+    # 2. Tunnel reachability check (catches Cloudflare 429 rate-limit / tunnel death)
+    tunnel_url = _get_tunnel_url()
+    if tunnel_url:
+        try:
+            tr = requests.get(f"{tunnel_url}/health", timeout=15)
+            if tr.status_code == 429:
+                log(f"Daleel: tunnel RATE LIMITED (429) at {tunnel_url}")
+                send_alert(
+                    f"⚠️ **Daleel tunnel rate-limited** (HTTP 429) — external users cannot reach Daleel.\n"
+                    f"Cause: too many requests through the free Cloudflare tunnel.\n"
+                    f"Fix: restarting Daleel to clear thread buildup.",
+                    key="daleel_tunnel_429",
+                )
+                _restart_daleel()
+            elif tr.status_code != 200:
+                log(f"Daleel: tunnel returned HTTP {tr.status_code}")
+                send_alert(
+                    f"⚠️ **Daleel tunnel error** — HTTP {tr.status_code} from `{tunnel_url}`",
+                    key="daleel_tunnel_error",
+                )
+            else:
+                log(f"Daleel: tunnel OK ({tunnel_url})")
+        except Exception as e:
+            log(f"Daleel: tunnel unreachable — {e}")
+            send_alert(
+                f"⚠️ **Daleel tunnel unreachable** — Flask is up locally but tunnel is dead.\n"
+                f"URL: `{tunnel_url}`\nError: `{e}`",
+                key="daleel_tunnel_dead",
+            )
 
     soul_age = data.get("soul_age_seconds")
     if soul_age and soul_age > SOUL_STALE_THRESHOLD and _market_hours():

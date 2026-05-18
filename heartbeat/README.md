@@ -1,6 +1,6 @@
 # HeartBeat (قلب) — QSE Platform Watchdog
 
-**Version:** 1.0 · **Created:** 2026-05-17  
+**Version:** 1.1 · **Created:** 2026-05-17 · **Updated:** 2026-05-18  
 **Location:** `~/qse-agent/heartbeat/`  
 **Service:** `heartbeat-watchdog.service` (systemd user service)
 
@@ -139,14 +139,12 @@ HeartBeat polls the channel every 30 seconds using `GET /channels/{id}/messages?
 
 **Trigger phrases** (case-insensitive):
 ```
-!status
-status
-status?
-are the systems online?
-are systems online?
-are you online?
-system status
+!status  status  status?  are the systems online?  system status
+!report  report  daily report  send report  muraqib report
 ```
+
+`!status` → full system status reply in channel  
+`!report` → fetches latest `reports/qse-report-*.html` and sends as Discord file attachment
 
 **Example response:**
 ```
@@ -166,6 +164,9 @@ Market: 🔴 Closed
 | `muraqib_crash` | PID died, `pipeline_running=True` | 30 min |
 | `muraqib_hang` | Heartbeat stale >10 min | 30 min |
 | `daleel_down` | `/health` non-200 or timeout | 30 min |
+| `daleel_tunnel_429` | Tunnel returns HTTP 429 (rate limited) | 30 min |
+| `daleel_tunnel_dead` | Tunnel unreachable / Cloudflare error | 30 min |
+| `daleel_tunnel_error` | Tunnel returns unexpected status code | 30 min |
 | `soul_stale` | SOUL.md >2h old during market hours | 30 min |
 | `ollama_down` | Ollama `/api/tags` unreachable | 30 min |
 
@@ -224,6 +225,8 @@ DISCORD_WEBHOOK=...     # for alert POSTs
 | Muraqib crashed | PID dead, `pipeline_running=True` | Discord alert + restart `news_pipeline.py` |
 | Muraqib hung | Heartbeat >10 min stale | Discord alert + SIGTERM → SIGKILL → restart |
 | Daleel down | `/health` non-200 or timeout | Discord alert + `systemctl --user restart qse-server` |
+| Tunnel rate limited | Tunnel returns HTTP 429 | Discord alert + restart qse-server to clear threads |
+| Tunnel dead | Cloudflare 1033 / unreachable | Discord alert (tunnel must be restarted manually) |
 | SOUL.md stale (market hours) | `soul_age_seconds > 7200` | Discord alert only (cron issue, no auto-fix) |
 | Ollama down | `/api/tags` unreachable | Discord alert only (needs `sudo systemctl start ollama`) |
 

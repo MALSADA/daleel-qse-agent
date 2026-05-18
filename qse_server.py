@@ -342,7 +342,21 @@ def _check_targets():
 # ── Ollama streaming ─────────────────────────────────────────────────────────
 
 def get_busy_model() -> str | None:
-    """Return the name of a model currently loaded in Ollama that isn't ours, or None."""
+    """Return the name of a model actively used by a running pipeline, or None.
+
+    Checks the Muraqib heartbeat first — if the pipeline is not running, the
+    7b model may be warm in VRAM from a finished run (keepalive cache) which
+    is harmless. Only block Daleel when the pipeline is truly in progress.
+    """
+    heartbeat_path = Path(__file__).parent / "heartbeat" / "muraqib_heartbeat.json"
+    try:
+        import json as _json
+        hb = _json.loads(heartbeat_path.read_text())
+        if not hb.get("pipeline_running"):
+            return None
+    except Exception:
+        pass  # heartbeat unreadable — fall through to Ollama check
+
     try:
         r = requests.get(f"{OLLAMA_URL}/api/ps", timeout=3)
         for entry in r.json().get("models", []):
@@ -624,6 +638,62 @@ def status():
     })
 
 
+@app.route("/api/gpu", methods=["GET"])
+def gpu_status():
+    """Return which model is currently loaded in VRAM.
+    state: 'ready' = Daleel's 3b loaded, 'muraqib' = 7b loaded (GPU busy),
+           'unloaded' = nothing loaded, 'error' = Ollama unreachable.
+    """
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/ps", timeout=3)
+        models = r.json().get("models", [])
+        loaded = [m["name"] for m in models]
+        if not loaded:
+            return jsonify({"state": "unloaded", "loaded": []})
+        if any(MODEL in n for n in loaded) and not any("7b" in n for n in loaded):
+            return jsonify({"state": "ready", "loaded": loaded})
+        if any("7b" in n for n in loaded):
+            return jsonify({"state": "muraqib", "loaded": loaded})
+        return jsonify({"state": "unloaded", "loaded": loaded})
+    except Exception:
+        return jsonify({"state": "error", "loaded": []})
+
+
+REPORTS_DIR = Path(__file__).parent / "reports"
+
+@app.route("/api/reports", methods=["GET"])
+def list_reports():
+    if not check_auth():
+        return jsonify([])
+    reports = []
+    for p in sorted(REPORTS_DIR.glob("qse-report-*.html"), reverse=True)[:30]:
+        parts = p.stem.split("-")  # ["qse","report","YYYY","MM","DD","session?"]
+        if len(parts) < 5:
+            continue
+        date = f"{parts[2]}-{parts[3]}-{parts[4]}"
+        session = parts[5] if len(parts) > 5 else "post"
+        mtime = datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        reports.append({
+            "filename": p.name,
+            "date": date,
+            "session": session,
+            "generated_at": mtime,
+            "size_kb": round(p.stat().st_size / 1024, 1),
+        })
+    return jsonify(reports)
+
+@app.route("/api/reports/<path:filename>", methods=["GET"])
+def get_report_file(filename):
+    if not check_auth():
+        return "Unauthorized", 401
+    if not filename.startswith("qse-report-") or not filename.endswith(".html") or "/" in filename:
+        return "Not found", 404
+    p = REPORTS_DIR / filename
+    if not p.exists():
+        return "Not found", 404
+    return p.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/api/chats", methods=["GET"])
 def list_chats():
     data = load_chats()
@@ -806,6 +876,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .ibar textarea:focus{outline:none;border-color:#1f6feb}
 .ibar textarea::placeholder{color:#8b949e}
 .toast{position:fixed;bottom:72px;right:14px;background:#1f2937;border:1px solid #374151;color:#e6edf3;padding:7px 13px;border-radius:8px;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+.report-day{margin-bottom:18px}
+.report-day-hdr{font-size:11px;font-weight:600;color:#6e7681;text-transform:uppercase;letter-spacing:.08em;padding:0 0 6px;margin-bottom:6px;border-bottom:1px solid #21262d}
+.report-card{background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden;margin-bottom:10px}
+.report-card[open]>.report-summary{border-bottom:1px solid #30363d}
+.report-summary{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;cursor:pointer;list-style:none;user-select:none;gap:12px}
+.report-summary::-webkit-details-marker{display:none}
+.report-summary:hover{background:#1c2128}
+.report-session-icon{font-size:16px;flex-shrink:0}
+.report-label{font-size:13px;font-weight:600;color:#e6edf3;flex:1}
+.report-meta{font-size:11px;color:#8b949e;white-space:nowrap}
+.report-chevron{font-size:12px;color:#6e7681;transition:transform .2s;flex-shrink:0}
+.report-card[open] .report-chevron{transform:rotate(90deg)}
+.report-iframe-wrap{width:100%;background:#0f172a}
+.report-iframe{width:100%;height:640px;border:none;display:block}
+.report-empty{color:#8b949e;font-size:13px;text-align:center;padding:60px 20px}
 .toast.show{opacity:1}
 .sb-overlay{display:none;position:fixed;inset:0;z-index:199;background:rgba(0,0,0,.5)}
 .sb-overlay.show{display:block}
@@ -822,6 +907,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <span class="hdr-title">&#127478;&#65039; Daleel</span>
   <span class="badge closed" id="mkt-badge">...</span>
   <span class="hdr-meta" id="mkt-meta">Loading...</span>
+  <span id="gpu-dot" title="GPU status: checking..." style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#555;margin-left:6px;vertical-align:middle;transition:background .4s;cursor:default"></span>
+  <span id="gpu-label" style="font-size:11px;color:#888;margin-left:4px;vertical-align:middle"></span>
   <button class="btn btn-orange" id="notif-btn" onclick="requestNotifPermission()">&#128276; Alerts</button>
   <button class="btn" id="btn-scrape" onclick="doScrape()">&#8635; Refresh</button>
   <a href="/logout" class="btn">Sign out</a>
@@ -846,6 +933,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="tabs">
       <div class="tab active" data-tab="chat" onclick="showTab('chat',this)">Chat</div>
       <div class="tab" data-tab="portfolio" onclick="showTab('portfolio',this)">Portfolio</div>
+      <div class="tab" data-tab="reports" onclick="showTab('reports',this)">Reports</div>
       <div class="tab" data-tab="notes" onclick="showTab('notes',this)">Notes</div>
     </div>
     <div class="panel" id="tab-chat"></div>
@@ -870,6 +958,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         </div>
         <div id="calc-result" style="margin-top:12px"></div>
       </div>
+    </div>
+    <div class="panel hidden" id="tab-reports" style="padding:14px;gap:0">
+      <div id="reports-content"><p class="report-empty">Loading reports...</p></div>
     </div>
     <div class="panel hidden" id="tab-notes">
       <p style="color:#8b949e;font-size:12px;margin-bottom:10px">Notes are included in every conversation as persistent memory.</p>
@@ -963,6 +1054,56 @@ function showTab(name,el){
   document.getElementById('input-bar').style.display=name==='chat'?'flex':'none';
   if(name==='portfolio')loadPortfolio();
   if(name==='notes')loadNotes();
+  if(name==='reports')loadReports();
+}
+
+async function loadReports(){
+  const el=document.getElementById('reports-content');
+  el.innerHTML='<p class="report-empty">Loading reports...</p>';
+  try{
+    const reports=await fetch('/api/reports').then(r=>r.json());
+    if(!reports.length){
+      el.innerHTML='<p class="report-empty">No reports yet — run Muraqib to generate one.</p>';
+      return;
+    }
+    // Group by date
+    const byDate={};
+    for(const r of reports){
+      if(!byDate[r.date])byDate[r.date]={};
+      byDate[r.date][r.session]=r;
+    }
+    const dates=Object.keys(byDate).sort().reverse();
+    let html='';
+    for(const date of dates){
+      html+=`<div class="report-day"><div class="report-day-hdr">${date}</div>`;
+      for(const [session,icon,label,time] of [
+        ['post','🌆','Post-market','14:00 AST'],
+        ['pre','🌅','Pre-market','08:45 AST'],
+      ]){
+        const r=byDate[date][session];
+        if(!r)continue;
+        const isLatest=session==='post'&&date===dates[0];
+        html+=`<details class="report-card"${isLatest?' open':''} data-filename="${r.filename}">
+          <summary class="report-summary">
+            <span class="report-session-icon">${icon}</span>
+            <span class="report-label">${label} <span style="color:#6e7681;font-weight:400">(${time})</span></span>
+            <span class="report-meta">${r.generated_at} &nbsp;·&nbsp; ${r.size_kb} KB</span>
+            <a class="btn" style="font-size:11px;padding:3px 9px;flex-shrink:0"
+               href="/api/reports/${r.filename}" download="${r.filename}"
+               onclick="event.stopPropagation()">⬇ Download</a>
+            <span class="report-chevron">▶</span>
+          </summary>
+          <div class="report-iframe-wrap">
+            <iframe class="report-iframe" src="/api/reports/${r.filename}" loading="lazy"></iframe>
+          </div>
+        </details>`;
+      }
+      html+='</div>';
+    }
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML=`<p class="report-empty" style="color:#ef4444">Failed to load reports: ${e}</p>`;
+  }
 }
 
 function renderSidebar(){
@@ -1309,6 +1450,37 @@ function toast(msg){
 loadChatList();
 loadStatus();
 setInterval(loadStatus,60000);
+
+async function loadGpuStatus(){
+  const dot=document.getElementById('gpu-dot');
+  const lbl=document.getElementById('gpu-label');
+  try{
+    const d=await fetch('/api/gpu').then(r=>r.json());
+    const state=d.state||'error';
+    const loaded=(d.loaded||[]).join(', ')||'none';
+    if(state==='ready'){
+      dot.style.background='#22c55e';
+      dot.title='GPU ready — qwen2.5:3b loaded in VRAM';
+      lbl.textContent='GPU ready';lbl.style.color='#22c55e';
+    }else if(state==='muraqib'){
+      dot.style.background='#ef4444';
+      dot.title='GPU busy — Muraqib (qwen2.5:7b) is running';
+      lbl.textContent='Muraqib running';lbl.style.color='#ef4444';
+    }else if(state==='unloaded'){
+      dot.style.background='#eab308';
+      dot.title='GPU idle — no model loaded (will load on first message)';
+      lbl.textContent='GPU idle';lbl.style.color='#888';
+    }else{
+      dot.style.background='#555';
+      dot.title='Ollama unreachable';
+      lbl.textContent='';
+    }
+  }catch(e){
+    dot.style.background='#555';dot.title='GPU status unavailable';lbl.textContent='';
+  }
+}
+loadGpuStatus();
+setInterval(loadGpuStatus,15000);
 connectAlertStream();
 if(Notification.permission==='granted'){
   document.getElementById('notif-btn').textContent='Bell On';
